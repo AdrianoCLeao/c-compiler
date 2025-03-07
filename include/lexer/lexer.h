@@ -15,7 +15,6 @@ typedef enum {
     TOKEN_CLOSE_BRACE,
     TOKEN_SEMICOLON,
     TOKEN_EOF,
-    TOKEN_UNKNOWN
 } TokenType;
 
 typedef struct {
