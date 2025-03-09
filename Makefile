@@ -44,6 +44,6 @@ clean:
 	@$(RMDIR) $(LIB_DIR)
 
 run: $(TARGET)
-	@$(EXECUTABLE)
+	@$(EXECUTABLE) $(ARGS)
 
 .PHONY: all clean run lib
