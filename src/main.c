@@ -45,7 +45,7 @@ char *read_file(const char *filename) {
 int main(int argc, char *argv[]) {
     if (argc != 2) {
         fprintf(stderr, "Usage: %s <source_file.c>\n", argv[0]);
-        return 1
+        return 1;
     }
 
     char *source_code = read_file(argv[1]);
@@ -65,6 +65,8 @@ int main(int argc, char *argv[]) {
 
     AssemblyProgram *assembly = generate_assembly(ast);
     print_assembly(assembly);
+
+    write_assembly_to_file(assembly, argv[1]);
 
     free_ast(ast);
     free_assembly(assembly);

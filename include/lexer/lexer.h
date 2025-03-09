@@ -15,10 +15,10 @@ typedef enum {
     TOKEN_CLOSE_BRACE,
     TOKEN_SEMICOLON,
     TOKEN_EOF,
-} TokenType;
+} LexTokenType;
 
 typedef struct {
-    TokenType type;
+    LexTokenType type;
     char *value;
 } Token;
 
