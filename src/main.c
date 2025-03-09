@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "../include/lexer/lexer.h"
+#include "../include/parser/parser.h"
 
 #ifdef _WIN32
     #include <io.h>
@@ -64,13 +65,15 @@ int main(int argc, char *argv[]) {
     Lexer lexer;
     lexer_init(&lexer, source_code);
 
-    Token token;
-    do {
-        token = lexer_next_token(&lexer);
-        print_token(token);
-        free_token(token);
-    } while (token.type != TOKEN_EOF);
+    Parser parser;
+    parser_init(&parser, &lexer);
 
+    ASTNode *ast = parse_program(&parser);
+    
+    printf("Abstract Syntax Tree:\n");
+    print_ast(ast, 0);
+
+    free_ast(ast);
     free(source_code);
     return 0;
 }
