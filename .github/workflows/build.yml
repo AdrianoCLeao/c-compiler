@@ -1,0 +1,22 @@
+name: Build app
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up GCC
+      run: sudo apt-get install -y gcc make
+
+    - name: Compile
+      run: |
+        make
