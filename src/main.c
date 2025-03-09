@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include "../include/lexer/lexer.h"
 #include "../include/parser/parser.h"
+#include "../include/assembly/assembly.h"
 
 #ifdef _WIN32
     #include <io.h>
@@ -10,16 +11,6 @@
 #else
     #include <unistd.h>
 #endif
-
-void print_token(Token token) {
-    const char *token_names[] = {
-        "IDENTIFIER", "CONSTANT", "KEYWORD_INT", "KEYWORD_VOID", "KEYWORD_RETURN",
-        "OPEN_PAREN", "CLOSE_PAREN", "OPEN_BRACE", "CLOSE_BRACE", "SEMICOLON",
-        "EOF", "UNKNOWN"
-    };
-
-    printf("Token: %-15s Value: %s\n", token_names[token.type], token.value);
-}
 
 char *read_file(const char *filename) {
     if (access(filename, F_OK) != 0) {
@@ -54,7 +45,7 @@ char *read_file(const char *filename) {
 int main(int argc, char *argv[]) {
     if (argc != 2) {
         fprintf(stderr, "Usage: %s <source_file.c>\n", argv[0]);
-        return 1;
+        return 1
     }
 
     char *source_code = read_file(argv[1]);
@@ -67,13 +58,17 @@ int main(int argc, char *argv[]) {
 
     Parser parser;
     parser_init(&parser, &lexer);
-
     ASTNode *ast = parse_program(&parser);
-    
+
     printf("Abstract Syntax Tree:\n");
     print_ast(ast, 0);
 
+    AssemblyProgram *assembly = generate_assembly(ast);
+    print_assembly(assembly);
+
     free_ast(ast);
+    free_assembly(assembly);
     free(source_code);
+
     return 0;
 }
