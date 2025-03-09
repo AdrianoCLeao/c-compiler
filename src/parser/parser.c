@@ -12,7 +12,7 @@ static ASTNode *create_ast_node(ASTNodeType type, char *value, ASTNode *left, AS
     return node;
 }
 
-static void consume(Parser *parser, TokenType expected_type) {
+static void consume(Parser *parser, LexTokenType expected_type) {
     if (parser->current_token.type != expected_type) {
         fprintf(stderr, "Syntax Error: Expected token %d but got %d\n", expected_type, parser->current_token.type);
         exit(1);

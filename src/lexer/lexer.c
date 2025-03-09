@@ -11,7 +11,7 @@
 #endif
 
 static const char *keywords[] = {"int", "void", "return"};
-static const TokenType keyword_tokens[] = {TOKEN_KEYWORD_INT, TOKEN_KEYWORD_VOID, TOKEN_KEYWORD_RETURN};
+static const LexTokenType keyword_tokens[] = {TOKEN_KEYWORD_INT, TOKEN_KEYWORD_VOID, TOKEN_KEYWORD_RETURN};
 
 void lexer_init(Lexer *lexer, const char *source) {
     lexer->input = source;
@@ -36,7 +36,7 @@ static int is_digit(char c) {
     return isdigit((unsigned char)c);
 }
 
-static Token make_token(TokenType type, const char *start, size_t length) {
+static Token make_token(LexTokenType type, const char *start, size_t length) {
     Token token;
     token.type = type;
     token.value = (char *)malloc(length + 1);
