@@ -1,4 +1,4 @@
 .global main
 main:
-  mov eax, 2
+  movl $2, %eax
   ret

@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "assembly.h": "c",
+        "stdio.h": "c",
+        "code_emission.h": "c"
+    }
+}

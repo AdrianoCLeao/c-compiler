@@ -77,17 +77,7 @@ AssemblyProgram *generate_assembly(ASTNode *ast) {
     return program;
 }
 
-static void create_directory(const char *path) {
-    struct stat st;
-    if (stat(path, &st) == -1) { 
-        if (MKDIR(path) != 0 && errno != EEXIST) {
-            fprintf(stderr, "Error: Could not create directory %s\n", path);
-            exit(1);
-        }
-    }
-}
-
-static char *get_output_assembly_path(const char *source_file) {
+char *get_output_assembly_path(const char *source_file) {
     char *source_copy = strdup(source_file);
     if (!source_copy) {
         fprintf(stderr, "Error: Memory allocation failed\n");
@@ -129,19 +119,6 @@ void write_assembly_to_file(AssemblyProgram *program, const char *source_file) {
     }
 
     char *output_path = get_output_assembly_path(source_file);
-
-    char *output_dir = strdup(output_path);
-    if (!output_dir) {
-        fprintf(stderr, "Memory allocation failed\n");
-        exit(1);
-    }
-    char *last_sep = strrchr(output_dir, PATH_SEPARATOR);
-    if (last_sep) {
-        *last_sep = '\0'; 
-        create_directory(output_dir);
-    }
-    free(output_dir);
-
     FILE *file = fopen(output_path, "w");
     if (!file) {
         fprintf(stderr, "Error: Could not open file %s for writing.\n", output_path);
@@ -149,15 +126,16 @@ void write_assembly_to_file(AssemblyProgram *program, const char *source_file) {
         return;
     }
 
-    fprintf(file, ".global %s\n", program->function->name);
-    fprintf(file, "%s:\n", program->function->name);
+    fprintf(file, ".global main\n");
+    fprintf(file, "main:\n");
 
     AssemblyInstruction *instr = program->function->instructions;
     while (instr) {
         switch (instr->type) {
             case ASM_MOV:
-                if (instr->src.type == OPERAND_IMMEDIATE)
-                    fprintf(file, "  mov eax, %d\n", instr->src.value);
+                if (instr->src.type == OPERAND_IMMEDIATE) {
+                    fprintf(file, "  movl $%d, %%eax\n", instr->src.value);
+                }
                 break;
             case ASM_RET:
                 fprintf(file, "  ret\n");

@@ -37,6 +37,7 @@ typedef struct {
 AssemblyProgram *generate_assembly(ASTNode *ast);
 void print_assembly(AssemblyProgram *program);
 void free_assembly(AssemblyProgram *program);
+char *get_output_assembly_path(const char *source_file);
 void write_assembly_to_file(AssemblyProgram *program, const char *source_file);
 
 #endif 

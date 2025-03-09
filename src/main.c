@@ -3,6 +3,7 @@
 #include "../include/lexer/lexer.h"
 #include "../include/parser/parser.h"
 #include "../include/assembly/assembly.h"
+#include "../include/assembly/code_emission.h"
 
 #ifdef _WIN32
     #include <io.h>
@@ -67,6 +68,8 @@ int main(int argc, char *argv[]) {
     print_assembly(assembly);
 
     write_assembly_to_file(assembly, argv[1]);
+
+    emit_code(argv[1]);
 
     free_ast(ast);
     free_assembly(assembly);
