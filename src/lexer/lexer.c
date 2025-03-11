@@ -94,6 +94,13 @@ Token lexer_next_token(Lexer *lexer) {
         case '{': return make_token(TOKEN_OPEN_BRACE, "{", 1);
         case '}': return make_token(TOKEN_CLOSE_BRACE, "}", 1);
         case ';': return make_token(TOKEN_SEMICOLON, ";", 1);
+        case '~': return make_token(TOKEN_TILDE, "~", 1);
+        case '-':
+            if (lexer->input[lexer->position] == '-') {
+                lexer->position++;
+                return make_token(TOKEN_DECREMENT, "--", 2);
+            }
+            return make_token(TOKEN_NEGATION, "-", 1);
         default:
             printf("Lexer Error: Invalid token '%c' at position %zu\n", c, lexer->position - 1);
             exit(1);

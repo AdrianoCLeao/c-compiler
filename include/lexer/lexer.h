@@ -14,6 +14,9 @@ typedef enum {
     TOKEN_OPEN_BRACE,
     TOKEN_CLOSE_BRACE,
     TOKEN_SEMICOLON,
+    TOKEN_TILDE,
+    TOKEN_NEGATION,
+    TOKEN_DECREMENT,
     TOKEN_EOF,
 } LexTokenType;
 
