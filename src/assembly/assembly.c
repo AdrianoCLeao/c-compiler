@@ -38,16 +38,45 @@ static AssemblyInstruction *generate_instructions(ASTNode *node) {
 
     switch (node->type) {
         case AST_STATEMENT_RETURN: {
-            Operand eax = { .type = OPERAND_REGISTER, .value = 0 }; 
+            AssemblyInstruction *expr_instr = generate_instructions(node->left);
+            AssemblyInstruction *ret_instr = create_instruction(ASM_RET, (Operand){0}, (Operand){0});
 
-            if (node->left && node->left->type == AST_EXPRESSION_CONSTANT) {
-                Operand imm = { .type = OPERAND_IMMEDIATE, .value = atoi(node->left->value) };
-                AssemblyInstruction *mov_instr = create_instruction(ASM_MOV, imm, eax);
-                AssemblyInstruction *ret_instr = create_instruction(ASM_RET, (Operand){0}, (Operand){0});
-                mov_instr->next = ret_instr;
-                return mov_instr;
+            if (expr_instr) {
+                AssemblyInstruction *last = expr_instr;
+                while (last->next) last = last->next;
+                last->next = ret_instr;
+                return expr_instr;
             }
-            break;
+            return ret_instr;
+        }
+        case AST_EXPRESSION_CONSTANT: {
+            Operand imm = { .type = OPERAND_IMMEDIATE, .value = atoi(node->value) };
+            Operand eax = { .type = OPERAND_REGISTER, .value = 0 };
+            return create_instruction(ASM_MOV, imm, eax);
+        }
+        case AST_EXPRESSION_NEGATE: {
+            AssemblyInstruction *inner_instr = generate_instructions(node->left);
+            AssemblyInstruction *neg_instr = create_instruction(ASM_NEG, (Operand){ .type = OPERAND_REGISTER, .value = 0 }, (Operand){0});
+
+            if (inner_instr) {
+                AssemblyInstruction *last = inner_instr;
+                while (last->next) last = last->next;
+                last->next = neg_instr;
+                return inner_instr;
+            }
+            return neg_instr;
+        }
+        case AST_EXPRESSION_COMPLEMENT: {
+            AssemblyInstruction *inner_instr = generate_instructions(node->left);
+            AssemblyInstruction *not_instr = create_instruction(ASM_NOT, (Operand){ .type = OPERAND_REGISTER, .value = 0 }, (Operand){0});
+
+            if (inner_instr) {
+                AssemblyInstruction *last = inner_instr;
+                while (last->next) last = last->next;
+                last->next = not_instr;
+                return inner_instr;
+            }
+            return not_instr;
         }
         default:
             fprintf(stderr, "Unsupported AST Node for Assembly Generation\n");
@@ -137,6 +166,12 @@ void write_assembly_to_file(AssemblyProgram *program, const char *source_file) {
                     fprintf(file, "  movl $%d, %%eax\n", instr->src.value);
                 }
                 break;
+            case ASM_NEG:
+                fprintf(file, "  negl %%eax\n");
+                break;
+            case ASM_NOT:
+                fprintf(file, "  notl %%eax\n");
+                break;
             case ASM_RET:
                 fprintf(file, "  ret\n");
                 break;
@@ -160,7 +195,13 @@ void print_assembly(AssemblyProgram *program) {
         switch (instr->type) {
             case ASM_MOV:
                 if (instr->src.type == OPERAND_IMMEDIATE)
-                    printf("  mov eax, %d\n", instr->src.value);
+                    printf("  movl $%d, %%eax\n", instr->src.value);
+                break;
+            case ASM_NEG:
+                printf("  negl %%eax\n");
+                break;
+            case ASM_NOT:
+                printf("  notl %%eax\n");
                 break;
             case ASM_RET:
                 printf("  ret\n");

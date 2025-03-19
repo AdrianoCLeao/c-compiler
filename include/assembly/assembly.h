@@ -5,7 +5,9 @@
 
 typedef enum {
     ASM_MOV,
-    ASM_RET
+    ASM_RET,
+    ASM_NEG,
+    ASM_NOT,
 } AssemblyInstructionType;
 
 typedef enum {
