@@ -64,6 +64,21 @@ ASTNode *parse_expression(Parser *parser) {
         ASTNode *constant = create_ast_node(AST_EXPRESSION_CONSTANT, parser->current_token.value, NULL, NULL);
         consume(parser, TOKEN_CONSTANT);
         return constant;
+    } else if (parser->current_token.type == TOKEN_NEGATION || parser->current_token.type == TOKEN_TILDE) {
+        LexTokenType op = parser->current_token.type;
+        consume(parser, op);
+        ASTNode *inner_expr = parse_expression(parser);
+        return create_ast_node(
+            (op == TOKEN_NEGATION) ? AST_EXPRESSION_NEGATE : AST_EXPRESSION_COMPLEMENT,
+            NULL,
+            inner_expr,
+            NULL
+        );
+    } else if (parser->current_token.type == TOKEN_OPEN_PAREN) {
+        consume(parser, TOKEN_OPEN_PAREN);
+        ASTNode *inner_expr = parse_expression(parser);
+        consume(parser, TOKEN_CLOSE_PAREN);
+        return inner_expr;
     } else {
         fprintf(stderr, "Syntax Error: Expected an expression\n");
         exit(1);
@@ -100,6 +115,12 @@ void print_ast(ASTNode *node, int depth) {
             break;
         case AST_EXPRESSION_IDENTIFIER:
             printf("Identifier: %s\n", node->value);
+            break;
+        case AST_EXPRESSION_NEGATE:
+            printf("Negate\n");
+            break;
+        case AST_EXPRESSION_COMPLEMENT:
+            printf("Complement\n");
             break;
         default:
             printf("Unknown Node\n");
