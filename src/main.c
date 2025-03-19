@@ -69,7 +69,7 @@ int main(int argc, char *argv[]) {
 
     write_assembly_to_file(assembly, argv[1]);
 
-    emit_code(argv[1]);
+    // emit_code(argv[1]);
 
     free_ast(ast);
     free_assembly(assembly);
