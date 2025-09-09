@@ -4,6 +4,7 @@
 #include "../include/parser/parser.h"
 #include "../include/assembly/assembly.h"
 #include "../include/assembly/code_emission.h"
+#include "../include/driver/driver.h"
 
 #ifdef _WIN32
     #include <io.h>
@@ -44,36 +45,115 @@ char *read_file(const char *filename) {
 }
 
 int main(int argc, char *argv[]) {
-    if (argc != 2) {
-        fprintf(stderr, "Usage: %s <source_file.c>\n", argv[0]);
-        return 1;
-    }
+    DriverOptions opts = driver_parse_args(argc, argv);
 
-    char *source_code = read_file(argv[1]);
+    char *source_code = read_file(opts.input_path);
     if (!source_code) {
         return 1;
     }
 
+    if (opts.stage == DRIVER_STAGE_LEX) {
+        if (opts.dump_tokens) {
+            if (!dump_tokens_file(opts.input_path, source_code, opts.dump_tokens_path)) {
+                fprintf(stderr, "Error: Failed to dump tokens.\n");
+                free(source_code);
+                return 1;
+            }
+        } else {
+            Lexer lex;
+            lexer_init(&lex, source_code);
+            for (;;) {
+                Token t = lexer_next_token(&lex);
+                if (t.type == TOKEN_EOF) { free_token(t); break; }
+                free_token(t);
+            }
+        }
+        free(source_code);
+        return 0;
+    }
+
     Lexer lexer;
     lexer_init(&lexer, source_code);
-
     Parser parser;
     parser_init(&parser, &lexer);
+
+    if (opts.stage == DRIVER_STAGE_PARSE) {
+        ASTNode *ast = parse_program(&parser);
+        if (opts.dump_tokens) {
+            if (!dump_tokens_file(opts.input_path, source_code, opts.dump_tokens_path)) {
+                fprintf(stderr, "Error: Failed to dump tokens.\n");
+                free_ast(ast);
+                free(source_code);
+                return 1;
+            }
+        }
+        if (opts.dump_ast_format != DUMP_AST_NONE) {
+            if (!dump_ast_file(ast, opts.input_path, opts.dump_ast_format, opts.dump_ast_path)) {
+                fprintf(stderr, "Error: Failed to dump AST.\n");
+                free_ast(ast);
+                free(source_code);
+                return 1;
+            }
+        }
+        free_ast(ast);
+        free(source_code);
+        return 0;
+    }
+
     ASTNode *ast = parse_program(&parser);
 
-    printf("Abstract Syntax Tree:\n");
-    print_ast(ast, 0);
+    if (opts.stage == DRIVER_STAGE_CODEGEN) {
+        AssemblyProgram *assembly = generate_assembly(ast);
+        if (opts.dump_tokens) {
+            if (!dump_tokens_file(opts.input_path, source_code, opts.dump_tokens_path)) {
+                fprintf(stderr, "Error: Failed to dump tokens.\n");
+                free_assembly(assembly);
+                free_ast(ast);
+                free(source_code);
+                return 1;
+            }
+        }
+        if (opts.dump_ast_format != DUMP_AST_NONE) {
+            if (!dump_ast_file(ast, opts.input_path, opts.dump_ast_format, opts.dump_ast_path)) {
+                fprintf(stderr, "Error: Failed to dump AST.\n");
+                free_assembly(assembly);
+                free_ast(ast);
+                free(source_code);
+                return 1;
+            }
+        }
+        free_assembly(assembly);
+        free_ast(ast);
+        free(source_code);
+        return 0;
+    }
+
+    if (!opts.quiet) {
+        printf("Abstract Syntax Tree:\n");
+        print_ast(ast, 0);
+    }
 
     AssemblyProgram *assembly = generate_assembly(ast);
-    print_assembly(assembly);
+    if (!opts.quiet) {
+        print_assembly(assembly);
+    }
 
-    write_assembly_to_file(assembly, argv[1]);
+    if (opts.emit_asm) {
+        write_assembly_to_file(assembly, opts.input_path);
+    }
 
-    // emit_code(argv[1]);
+    if (opts.dump_tokens) {
+        (void)dump_tokens_file(opts.input_path, source_code, opts.dump_tokens_path);
+    }
+    if (opts.dump_ast_format != DUMP_AST_NONE) {
+        (void)dump_ast_file(ast, opts.input_path, opts.dump_ast_format, opts.dump_ast_path);
+    }
+
+    // For now, wont assemble by default
+    // emit_code(opts.input_path);
 
     free_ast(ast);
     free_assembly(assembly);
     free(source_code);
-
     return 0;
 }

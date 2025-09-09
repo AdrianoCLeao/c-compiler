@@ -36,12 +36,14 @@ static int is_digit(char c) {
     return isdigit((unsigned char)c);
 }
 
-static Token make_token(LexTokenType type, const char *start, size_t length) {
+static Token make_token(LexTokenType type, const char *start_ptr, size_t length, size_t start_off) {
     Token token;
     token.type = type;
     token.value = (char *)malloc(length + 1);
-    memcpy(token.value, start, length);
+    memcpy(token.value, start_ptr, length);
     token.value[length] = '\0';
+    token.start = start_off;
+    token.length = length;
     return token;
 }
 
@@ -54,11 +56,11 @@ static Token match_identifier_or_keyword(Lexer *lexer) {
     
     for (size_t i = 0; i < sizeof(keywords) / sizeof(keywords[0]); i++) {
         if (strncmp(lexer->input + start_pos, keywords[i], length) == 0 && strlen(keywords[i]) == length) {
-            return make_token(keyword_tokens[i], lexer->input + start_pos, length);
+            return make_token(keyword_tokens[i], lexer->input + start_pos, length, start_pos);
         }
     }
 
-    return make_token(TOKEN_IDENTIFIER, lexer->input + start_pos, length);
+    return make_token(TOKEN_IDENTIFIER, lexer->input + start_pos, length, start_pos);
 }
 
 static Token match_constant(Lexer *lexer) {
@@ -66,14 +68,14 @@ static Token match_constant(Lexer *lexer) {
     while (is_digit(lexer->input[lexer->position])) {
         lexer->position++;
     }
-    return make_token(TOKEN_CONSTANT, lexer->input + start_pos, lexer->position - start_pos);
+    return make_token(TOKEN_CONSTANT, lexer->input + start_pos, lexer->position - start_pos, start_pos);
 }
 
 Token lexer_next_token(Lexer *lexer) {
     skip_whitespace(lexer);
 
     if (lexer->input[lexer->position] == '\0') {
-        return make_token(TOKEN_EOF, "", 0);
+        return make_token(TOKEN_EOF, "", 0, lexer->position);
     }
 
     char c = lexer->input[lexer->position];
@@ -89,18 +91,18 @@ Token lexer_next_token(Lexer *lexer) {
     lexer->position++;
 
     switch (c) {
-        case '(': return make_token(TOKEN_OPEN_PAREN, "(", 1);
-        case ')': return make_token(TOKEN_CLOSE_PAREN, ")", 1);
-        case '{': return make_token(TOKEN_OPEN_BRACE, "{", 1);
-        case '}': return make_token(TOKEN_CLOSE_BRACE, "}", 1);
-        case ';': return make_token(TOKEN_SEMICOLON, ";", 1);
-        case '~': return make_token(TOKEN_TILDE, "~", 1);
+        case '(': return make_token(TOKEN_OPEN_PAREN, "(", 1, lexer->position - 1);
+        case ')': return make_token(TOKEN_CLOSE_PAREN, ")", 1, lexer->position - 1);
+        case '{': return make_token(TOKEN_OPEN_BRACE, "{", 1, lexer->position - 1);
+        case '}': return make_token(TOKEN_CLOSE_BRACE, "}", 1, lexer->position - 1);
+        case ';': return make_token(TOKEN_SEMICOLON, ";", 1, lexer->position - 1);
+        case '~': return make_token(TOKEN_TILDE, "~", 1, lexer->position - 1);
         case '-':
             if (lexer->input[lexer->position] == '-') {
                 lexer->position++;
-                return make_token(TOKEN_DECREMENT, "--", 2);
+                return make_token(TOKEN_DECREMENT, "--", 2, lexer->position - 2);
             }
-            return make_token(TOKEN_NEGATION, "-", 1);
+            return make_token(TOKEN_NEGATION, "-", 1, lexer->position - 1);
         default:
             printf("Lexer Error: Invalid token '%c' at position %zu\n", c, lexer->position - 1);
             exit(1);
