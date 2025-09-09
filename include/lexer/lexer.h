@@ -23,6 +23,8 @@ typedef enum {
 typedef struct {
     LexTokenType type;
     char *value;
+    size_t start;   // byte offset in input
+    size_t length;  // length of lexeme
 } Token;
 
 typedef struct {

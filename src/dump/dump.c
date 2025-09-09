@@ -1,0 +1,216 @@
+#include "../../include/dump/dump.h"
+#include "../../include/lexer/lexer.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+
+#ifdef _WIN32
+    #include <direct.h>
+    #define MKDIR(path) _mkdir(path)
+    #define PATH_SEPARATOR '\\'
+#else
+    #include <sys/stat.h>
+    #include <sys/types.h>
+    #define MKDIR(path) mkdir(path, 0755)
+    #define PATH_SEPARATOR '/'
+#endif
+
+static char *xstrdup(const char *s) {
+    size_t n = strlen(s) + 1;
+    char *p = (char *)malloc(n);
+    if (!p) return NULL;
+    memcpy(p, s, n);
+    return p;
+}
+
+void dump_ensure_out_dir(void) {
+    MKDIR("out");
+}
+
+static char *basename_no_ext(const char *path) {
+    const char *base = strrchr(path, PATH_SEPARATOR);
+    base = base ? base + 1 : path;
+    size_t len = strlen(base);
+    if (len >= 2) {
+        const char *dot = strrchr(base, '.');
+        if (dot && strcmp(dot, ".c") == 0) {
+            len = (size_t)(dot - base);
+        }
+    }
+    char *name = (char *)malloc(len + 1);
+    if (!name) return NULL;
+    memcpy(name, base, len);
+    name[len] = '\0';
+    return name;
+}
+
+char *dump_default_path(const char *input_path, const char *ext) {
+    dump_ensure_out_dir();
+    char *base = basename_no_ext(input_path);
+    if (!base) return NULL;
+    size_t sz = strlen("out") + 1 + strlen(base) + strlen(ext) + 1;
+    char *p = (char *)malloc(sz);
+    if (!p) { free(base); return NULL; }
+    snprintf(p, sz, "out%c%s%s", PATH_SEPARATOR, base, ext);
+    free(base);
+    return p;
+}
+
+static const char *token_type_name(LexTokenType t) {
+    switch (t) {
+        case TOKEN_IDENTIFIER: return "TOKEN_IDENTIFIER";
+        case TOKEN_CONSTANT: return "TOKEN_CONSTANT";
+        case TOKEN_KEYWORD_INT: return "TOKEN_KEYWORD_INT";
+        case TOKEN_KEYWORD_VOID: return "TOKEN_KEYWORD_VOID";
+        case TOKEN_KEYWORD_RETURN: return "TOKEN_KEYWORD_RETURN";
+        case TOKEN_OPEN_PAREN: return "TOKEN_OPEN_PAREN";
+        case TOKEN_CLOSE_PAREN: return "TOKEN_CLOSE_PAREN";
+        case TOKEN_OPEN_BRACE: return "TOKEN_OPEN_BRACE";
+        case TOKEN_CLOSE_BRACE: return "TOKEN_CLOSE_BRACE";
+        case TOKEN_SEMICOLON: return "TOKEN_SEMICOLON";
+        case TOKEN_TILDE: return "TOKEN_TILDE";
+        case TOKEN_NEGATION: return "TOKEN_NEGATION";
+        case TOKEN_DECREMENT: return "TOKEN_DECREMENT";
+        case TOKEN_EOF: return "TOKEN_EOF";
+        default: return "TOKEN_UNKNOWN";
+    }
+}
+
+static void compute_line_col(const char *src, size_t pos, int *out_line, int *out_col) {
+    int line = 1, col = 1;
+    for (size_t i = 0; i < pos; i++) {
+        if (src[i] == '\n') { line++; col = 1; }
+        else { col++; }
+    }
+    *out_line = line;
+    *out_col = col;
+}
+
+bool dump_tokens_file(const char *input_path, const char *source, const char *out_path) {
+    char *path = NULL;
+    if (out_path) path = xstrdup(out_path);
+    else path = dump_default_path(input_path, ".tokens");
+    if (!path) return false;
+
+    FILE *f = fopen(path, "w");
+    if (!f) { free(path); return false; }
+
+    Lexer lex; lexer_init(&lex, source);
+    size_t i = 0;
+    for (;;) {
+        Token t = lexer_next_token(&lex);
+        int line = 0, col = 0;
+        compute_line_col(source, t.start, &line, &col);
+        fprintf(f, "%zu\t%s\t\"%s\"\t%d:%d\n", i, token_type_name(t.type), t.value, line, col);
+        i++;
+        if (t.type == TOKEN_EOF) { free_token(t); break; }
+        free_token(t);
+    }
+
+    fclose(f);
+    free(path);
+    return true;
+}
+
+static const char *ast_type_name(ASTNodeType t) {
+    switch (t) {
+        case AST_PROGRAM: return "Program";
+        case AST_FUNCTION: return "Function";
+        case AST_STATEMENT_RETURN: return "Return";
+        case AST_EXPRESSION_CONSTANT: return "Constant";
+        case AST_EXPRESSION_IDENTIFIER: return "Identifier";
+        case AST_EXPRESSION_NEGATE: return "Negate";
+        case AST_EXPRESSION_COMPLEMENT: return "Complement";
+        default: return "Unknown";
+    }
+}
+
+static void dump_ast_txt_rec(FILE *f, ASTNode *n, int depth) {
+    if (!n) return;
+    for (int i = 0; i < depth; i++) fputc(' ', f), fputc(' ', f);
+    fprintf(f, "%s", ast_type_name(n->type));
+    if (n->value) fprintf(f, ": %s", n->value);
+    fputc('\n', f);
+    dump_ast_txt_rec(f, n->left, depth + 1);
+    dump_ast_txt_rec(f, n->right, depth + 1);
+}
+
+static void dump_ast_dot_rec(FILE *f, ASTNode *n, int *counter) {
+    if (!n) return;
+    int id = (*counter)++;
+    // Label
+    if (n->value)
+        fprintf(f, "  n%d [label=\"%s\\n%s\"];\n", id, ast_type_name(n->type), n->value);
+    else
+        fprintf(f, "  n%d [label=\"%s\"];\n", id, ast_type_name(n->type));
+    int left_id = -1, right_id = -1;
+    if (n->left) { left_id = *counter; dump_ast_dot_rec(f, n->left, counter); fprintf(f, "  n%d -> n%d;\n", id, left_id); }
+    if (n->right) { right_id = *counter; dump_ast_dot_rec(f, n->right, counter); fprintf(f, "  n%d -> n%d;\n", id, right_id); }
+}
+
+static void json_escape(FILE *f, const char *s) {
+    for (const char *p = s; *p; ++p) {
+        unsigned char c = (unsigned char)*p;
+        switch (c) {
+            case '"': fputs("\\\"", f); break;
+            case '\\': fputs("\\\\", f); break;
+            case '\n': fputs("\\n", f); break;
+            case '\r': fputs("\\r", f); break;
+            case '\t': fputs("\\t", f); break;
+            default:
+                if (c < 0x20) fprintf(f, "\\u%04x", c);
+                else fputc(c, f);
+        }
+    }
+}
+
+static void dump_ast_json_rec(FILE *f, ASTNode *n) {
+    if (!n) { fputs("null", f); return; }
+    fputs("{\n", f);
+    fprintf(f, "  \"type\": \"%s\"", ast_type_name(n->type));
+    if (n->value) {
+        fputs(",\n  \"value\": \"", f); json_escape(f, n->value); fputs("\"", f);
+    }
+    fputs(",\n  \"left\": ", f); dump_ast_json_rec(f, n->left);
+    fputs(",\n  \"right\": ", f); dump_ast_json_rec(f, n->right);
+    fputs("\n}", f);
+}
+
+bool dump_ast_file(ASTNode *ast, const char *input_path, DumpAstFormat fmt, const char *out_path) {
+    const char *ext = ".ast.txt";
+    if (fmt == DUMP_AST_DOT) ext = ".ast.dot";
+    else if (fmt == DUMP_AST_JSON) ext = ".ast.json";
+
+    char *path = NULL;
+    if (out_path) path = (char *)xstrdup(out_path);
+    else path = dump_default_path(input_path, ext);
+    if (!path) return false;
+
+    FILE *f = fopen(path, "w");
+    if (!f) { free(path); return false; }
+
+    switch (fmt) {
+        case DUMP_AST_TXT:
+            dump_ast_txt_rec(f, ast, 0);
+            break;
+        case DUMP_AST_DOT: {
+            fputs("digraph AST {\n", f);
+            int counter = 0;
+            dump_ast_dot_rec(f, ast, &counter);
+            fputs("}\n", f);
+            break;
+        }
+        case DUMP_AST_JSON:
+            dump_ast_json_rec(f, ast);
+            fputc('\n', f);
+            break;
+        default:
+            fclose(f); free(path); return false;
+    }
+
+    fclose(f);
+    free(path);
+    return true;
+}
+
