@@ -184,3 +184,58 @@ bool dump_ast_file(ASTNode *ast, const char *input_path, DumpAstFormat fmt, cons
     free(path);
     return true;
 }
+
+bool dump_tacky_file(TackyProgram *p, const char *input_path, DumpTackyFormat fmt, const char *out_path) {
+    const char *ext = (fmt == DUMP_TACKY_JSON) ? ".tacky.json" : ".tacky.txt";
+    char *path = NULL;
+    if (out_path) path = (char *)xstrdup(out_path);
+    else path = dump_default_path(input_path, ext);
+    if (!path) return false;
+    FILE *f = fopen(path, "w");
+    if (!f) { free(path); return false; }
+
+    if (fmt == DUMP_TACKY_JSON) {
+        fprintf(f, "{\n  \"function\": \"%s\",\n  \"body\": [\n", p->fn ? p->fn->name : "");
+        int first = 1;
+        for (TackyInstr *ins = p->fn ? p->fn->body : NULL; ins; ins = ins->next) {
+            if (!first) fprintf(f, ",\n");
+            first = 0;
+            fprintf(f, "    {");
+            if (ins->kind == TACKY_INSTR_UNARY) {
+                fprintf(f, "\"kind\": \"Unary\", ");
+                fprintf(f, "\"op\": \"%s\", ", ins->un_op == TACKY_UN_NEGATE ? "Negate" : "Complement");
+                fprintf(f, "\"src\": ");
+                if (ins->un_src.kind == TACKY_VAL_CONSTANT) fprintf(f, "{\"const\": %d}", ins->un_src.constant);
+                else fprintf(f, "{\"var\": \"%s\"}", ins->un_src.var_name);
+                fprintf(f, ", \"dst\": \"%s\"", ins->un_dst);
+            } else if (ins->kind == TACKY_INSTR_RETURN) {
+                fprintf(f, "\"kind\": \"Return\", \"value\": ");
+                if (ins->ret_val.kind == TACKY_VAL_CONSTANT) fprintf(f, "{\"const\": %d}", ins->ret_val.constant);
+                else fprintf(f, "{\"var\": \"%s\"}", ins->ret_val.var_name);
+            }
+            fprintf(f, "}");
+        }
+        fprintf(f, "\n  ]\n}\n");
+    } else {
+        fprintf(f, "Function %s()\n", p->fn ? p->fn->name : "");
+        for (TackyInstr *ins = p->fn ? p->fn->body : NULL; ins; ins = ins->next) {
+            switch (ins->kind) {
+                case TACKY_INSTR_UNARY:
+                    if (ins->un_src.kind == TACKY_VAL_CONSTANT)
+                        fprintf(f, "  %s %d -> %s\n", (ins->un_op == TACKY_UN_NEGATE ? "Negate" : "Complement"), ins->un_src.constant, ins->un_dst);
+                    else
+                        fprintf(f, "  %s %s -> %s\n", (ins->un_op == TACKY_UN_NEGATE ? "Negate" : "Complement"), ins->un_src.var_name, ins->un_dst);
+                    break;
+                case TACKY_INSTR_RETURN:
+                    if (ins->ret_val.kind == TACKY_VAL_CONSTANT)
+                        fprintf(f, "  Return %d\n", ins->ret_val.constant);
+                    else
+                        fprintf(f, "  Return %s\n", ins->ret_val.var_name);
+                    break;
+            }
+        }
+    }
+    fclose(f);
+    free(path);
+    return true;
+}

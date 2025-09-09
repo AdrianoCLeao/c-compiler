@@ -1,4 +1,5 @@
 #include "../../include/assembly/assembly.h"
+#include "../../include/tacky/tacky.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -33,75 +34,68 @@ static AssemblyInstruction *create_instruction(AssemblyInstructionType type, Ope
     return instr;
 }
 
-static AssemblyInstruction *generate_instructions(ASTNode *node) {
-    if (!node) return NULL;
-
-    switch (node->type) {
-        case AST_STATEMENT_RETURN: {
-            AssemblyInstruction *expr_instr = generate_instructions(node->left);
-            AssemblyInstruction *ret_instr = create_instruction(ASM_RET, (Operand){0}, (Operand){0});
-
-            if (expr_instr) {
-                AssemblyInstruction *last = expr_instr;
-                while (last->next) last = last->next;
-                last->next = ret_instr;
-                return expr_instr;
-            }
-            return ret_instr;
-        }
-        case AST_EXPRESSION_CONSTANT: {
-            Operand imm = { .type = OPERAND_IMMEDIATE, .value = atoi(node->value) };
-            Operand eax = { .type = OPERAND_REGISTER, .value = 0 };
-            return create_instruction(ASM_MOV, imm, eax);
-        }
-        case AST_EXPRESSION_NEGATE: {
-            AssemblyInstruction *inner_instr = generate_instructions(node->left);
-            AssemblyInstruction *neg_instr = create_instruction(ASM_NEG, (Operand){ .type = OPERAND_REGISTER, .value = 0 }, (Operand){0});
-
-            if (inner_instr) {
-                AssemblyInstruction *last = inner_instr;
-                while (last->next) last = last->next;
-                last->next = neg_instr;
-                return inner_instr;
-            }
-            return neg_instr;
-        }
-        case AST_EXPRESSION_COMPLEMENT: {
-            AssemblyInstruction *inner_instr = generate_instructions(node->left);
-            AssemblyInstruction *not_instr = create_instruction(ASM_NOT, (Operand){ .type = OPERAND_REGISTER, .value = 0 }, (Operand){0});
-
-            if (inner_instr) {
-                AssemblyInstruction *last = inner_instr;
-                while (last->next) last = last->next;
-                last->next = not_instr;
-                return inner_instr;
-            }
-            return not_instr;
-        }
-        default:
-            fprintf(stderr, "Unsupported AST Node for Assembly Generation\n");
-            exit(1);
-    }
-
-    return NULL;
+static void append_instr(AssemblyInstruction **head, AssemblyInstruction **tail, AssemblyInstruction *ins) {
+    ins->next = NULL;
+    if (!*head) { *head = *tail = ins; }
+    else { (*tail)->next = ins; *tail = ins; }
 }
 
-AssemblyProgram *generate_assembly(ASTNode *ast) {
-    if (!ast || ast->type != AST_PROGRAM || !ast->left) {
-        fprintf(stderr, "Invalid AST structure for assembly generation\n");
-        exit(1);
+static AssemblyInstruction *generate_instructions_from_tacky(TackyFunction *fn) {
+    if (!fn) return NULL;
+    AssemblyInstruction *head = NULL, *tail = NULL;
+
+    char *eax_var = NULL;
+    for (TackyInstr *ins = fn->body; ins; ins = ins->next) {
+        switch (ins->kind) {
+            case TACKY_INSTR_UNARY: {
+                if (ins->un_src.kind == TACKY_VAL_CONSTANT) {
+                    Operand imm = { .type = OPERAND_IMMEDIATE, .value = ins->un_src.constant };
+                    Operand eax = { .type = OPERAND_REGISTER, .value = 0 };
+                    append_instr(&head, &tail, create_instruction(ASM_MOV, imm, eax));
+                    eax_var = NULL;
+                } else {
+                    if (!eax_var || strcmp(eax_var, ins->un_src.var_name) != 0) {
+                        // In Chapter 2, sequences are linear; treat as error if violated.
+                        fprintf(stderr, "Codegen error: unsupported non-linear TACKY use of %s in unary op.\n", ins->un_src.var_name);
+                        exit(1);
+                    }
+                }
+
+                AssemblyInstructionType op = (ins->un_op == TACKY_UN_NEGATE) ? ASM_NEG : ASM_NOT;
+                append_instr(&head, &tail, create_instruction(op, (Operand){ .type = OPERAND_REGISTER, .value = 0 }, (Operand){0}));
+                eax_var = ins->un_dst;
+                break;
+            }
+            case TACKY_INSTR_RETURN: {
+                if (ins->ret_val.kind == TACKY_VAL_CONSTANT) {
+                    Operand imm = { .type = OPERAND_IMMEDIATE, .value = ins->ret_val.constant };
+                    Operand eax = { .type = OPERAND_REGISTER, .value = 0 };
+                    append_instr(&head, &tail, create_instruction(ASM_MOV, imm, eax));
+                } else {
+                    if (!eax_var || strcmp(eax_var, ins->ret_val.var_name) != 0) {
+                        fprintf(stderr, "Codegen error: return of non-eax var %s unsupported in Chapter 2.\n", ins->ret_val.var_name);
+                        exit(1);
+                    }
+                }
+                append_instr(&head, &tail, create_instruction(ASM_RET, (Operand){0}, (Operand){0}));
+                break;
+            }
+        }
     }
 
-    ASTNode *func = ast->left;
-    if (func->type != AST_FUNCTION) {
-        fprintf(stderr, "Expected a function in AST\n");
+    return head;
+}
+
+AssemblyProgram *generate_assembly(TackyProgram *tacky) {
+    if (!tacky || !tacky->fn) {
+        fprintf(stderr, "Invalid TACKY structure for assembly generation\n");
         exit(1);
     }
 
     AssemblyProgram *program = (AssemblyProgram *)malloc(sizeof(AssemblyProgram));
     program->function = (AssemblyFunction *)malloc(sizeof(AssemblyFunction));
-    program->function->name = strdup(func->value);
-    program->function->instructions = generate_instructions(func->right);
+    program->function->name = strdup(tacky->fn->name);
+    program->function->instructions = generate_instructions_from_tacky(tacky->fn);
 
     return program;
 }

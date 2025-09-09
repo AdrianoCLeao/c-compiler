@@ -5,6 +5,7 @@
 #include "../include/assembly/assembly.h"
 #include "../include/assembly/code_emission.h"
 #include "../include/driver/driver.h"
+#include "../include/tacky/tacky.h"
 
 #ifdef _WIN32
     #include <io.h>
@@ -102,12 +103,49 @@ int main(int argc, char *argv[]) {
 
     ASTNode *ast = parse_program(&parser);
 
+    if (opts.stage == DRIVER_STAGE_TACKY) {
+        TackyProgram *tacky = tacky_from_ast(ast);
+        if (opts.dump_tokens) {
+            if (!dump_tokens_file(opts.input_path, source_code, opts.dump_tokens_path)) {
+                fprintf(stderr, "Error: Failed to dump tokens.\n");
+                tacky_free(tacky);
+                free_ast(ast);
+                free(source_code);
+                return 1;
+            }
+        }
+        if (opts.dump_ast_format != DUMP_AST_NONE) {
+            if (!dump_ast_file(ast, opts.input_path, opts.dump_ast_format, opts.dump_ast_path)) {
+                fprintf(stderr, "Error: Failed to dump AST.\n");
+                tacky_free(tacky);
+                free_ast(ast);
+                free(source_code);
+                return 1;
+            }
+        }
+        if (opts.dump_tacky_format != DUMP_TACKY_NONE) {
+            if (!dump_tacky_file(tacky, opts.input_path, opts.dump_tacky_format, opts.dump_tacky_path)) {
+                fprintf(stderr, "Error: Failed to dump TACKY.\n");
+                tacky_free(tacky);
+                free_ast(ast);
+                free(source_code);
+                return 1;
+            }
+        }
+        tacky_free(tacky);
+        free_ast(ast);
+        free(source_code);
+        return 0;
+    }
+
     if (opts.stage == DRIVER_STAGE_CODEGEN) {
-        AssemblyProgram *assembly = generate_assembly(ast);
+        TackyProgram *tacky = tacky_from_ast(ast);
+        AssemblyProgram *assembly = generate_assembly(tacky);
         if (opts.dump_tokens) {
             if (!dump_tokens_file(opts.input_path, source_code, opts.dump_tokens_path)) {
                 fprintf(stderr, "Error: Failed to dump tokens.\n");
                 free_assembly(assembly);
+                tacky_free(tacky);
                 free_ast(ast);
                 free(source_code);
                 return 1;
@@ -117,12 +155,17 @@ int main(int argc, char *argv[]) {
             if (!dump_ast_file(ast, opts.input_path, opts.dump_ast_format, opts.dump_ast_path)) {
                 fprintf(stderr, "Error: Failed to dump AST.\n");
                 free_assembly(assembly);
+                tacky_free(tacky);
                 free_ast(ast);
                 free(source_code);
                 return 1;
             }
         }
+        if (opts.dump_tacky_format != DUMP_TACKY_NONE) {
+            (void)dump_tacky_file(tacky, opts.input_path, opts.dump_tacky_format, opts.dump_tacky_path);
+        }
         free_assembly(assembly);
+        tacky_free(tacky);
         free_ast(ast);
         free(source_code);
         return 0;
@@ -133,7 +176,8 @@ int main(int argc, char *argv[]) {
         print_ast(ast, 0);
     }
 
-    AssemblyProgram *assembly = generate_assembly(ast);
+    TackyProgram *tacky = tacky_from_ast(ast);
+    AssemblyProgram *assembly = generate_assembly(tacky);
     if (!opts.quiet) {
         print_assembly(assembly);
     }
@@ -148,11 +192,15 @@ int main(int argc, char *argv[]) {
     if (opts.dump_ast_format != DUMP_AST_NONE) {
         (void)dump_ast_file(ast, opts.input_path, opts.dump_ast_format, opts.dump_ast_path);
     }
+    if (opts.dump_tacky_format != DUMP_TACKY_NONE) {
+        (void)dump_tacky_file(tacky, opts.input_path, opts.dump_tacky_format, opts.dump_tacky_path);
+    }
 
     // For now, wont assemble by default
     // emit_code(opts.input_path);
 
     free_ast(ast);
+    tacky_free(tacky);
     free_assembly(assembly);
     free(source_code);
     return 0;
