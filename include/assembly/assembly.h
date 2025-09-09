@@ -1,7 +1,7 @@
 #ifndef ASSEMBLY_H
 #define ASSEMBLY_H
 
-#include "../parser/parser.h"
+#include "../tacky/tacky.h"
 
 typedef enum {
     ASM_MOV,
@@ -36,7 +36,7 @@ typedef struct {
     AssemblyFunction *function;
 } AssemblyProgram;
 
-AssemblyProgram *generate_assembly(ASTNode *ast);
+AssemblyProgram *generate_assembly(TackyProgram *tacky);
 void print_assembly(AssemblyProgram *program);
 void free_assembly(AssemblyProgram *program);
 char *get_output_assembly_path(const char *source_file);
