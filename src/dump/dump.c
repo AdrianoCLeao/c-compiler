@@ -1,5 +1,6 @@
 #include "../../include/dump/dump.h"
 #include "../../include/lexer/lexer.h"
+#include "../../include/util/diag.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -55,36 +56,6 @@ char *dump_default_path(const char *input_path, const char *ext) {
     snprintf(p, sz, "out%c%s%s", PATH_SEPARATOR, base, ext);
     free(base);
     return p;
-}
-
-static const char *token_type_name(LexTokenType t) {
-    switch (t) {
-        case TOKEN_IDENTIFIER: return "TOKEN_IDENTIFIER";
-        case TOKEN_CONSTANT: return "TOKEN_CONSTANT";
-        case TOKEN_KEYWORD_INT: return "TOKEN_KEYWORD_INT";
-        case TOKEN_KEYWORD_VOID: return "TOKEN_KEYWORD_VOID";
-        case TOKEN_KEYWORD_RETURN: return "TOKEN_KEYWORD_RETURN";
-        case TOKEN_OPEN_PAREN: return "TOKEN_OPEN_PAREN";
-        case TOKEN_CLOSE_PAREN: return "TOKEN_CLOSE_PAREN";
-        case TOKEN_OPEN_BRACE: return "TOKEN_OPEN_BRACE";
-        case TOKEN_CLOSE_BRACE: return "TOKEN_CLOSE_BRACE";
-        case TOKEN_SEMICOLON: return "TOKEN_SEMICOLON";
-        case TOKEN_TILDE: return "TOKEN_TILDE";
-        case TOKEN_NEGATION: return "TOKEN_NEGATION";
-        case TOKEN_DECREMENT: return "TOKEN_DECREMENT";
-        case TOKEN_EOF: return "TOKEN_EOF";
-        default: return "TOKEN_UNKNOWN";
-    }
-}
-
-static void compute_line_col(const char *src, size_t pos, int *out_line, int *out_col) {
-    int line = 1, col = 1;
-    for (size_t i = 0; i < pos; i++) {
-        if (src[i] == '\n') { line++; col = 1; }
-        else { col++; }
-    }
-    *out_line = line;
-    *out_col = col;
 }
 
 bool dump_tokens_file(const char *input_path, const char *source, const char *out_path) {
@@ -213,4 +184,3 @@ bool dump_ast_file(ASTNode *ast, const char *input_path, DumpAstFormat fmt, cons
     free(path);
     return true;
 }
-

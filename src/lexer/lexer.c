@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../../include/util/diag.h"
 
 #ifdef _WIN32
     #define strcasecmp _stricmp
@@ -103,9 +104,13 @@ Token lexer_next_token(Lexer *lexer) {
                 return make_token(TOKEN_DECREMENT, "--", 2, lexer->position - 2);
             }
             return make_token(TOKEN_NEGATION, "-", 1, lexer->position - 1);
-        default:
-            printf("Lexer Error: Invalid token '%c' at position %zu\n", c, lexer->position - 1);
+        default: {
+            size_t pos = lexer->position - 1;
+            int line = 0, col = 0;
+            compute_line_col(lexer->input, pos, &line, &col);
+            fprintf(stderr, "Lexer Error at %d:%d: Invalid token '%c'\n", line, col, c);
             exit(1);
+        }
     }
 }
 

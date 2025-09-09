@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../../include/util/diag.h"
 
 static ASTNode *create_ast_node(ASTNodeType type, char *value, ASTNode *left, ASTNode *right) {
     ASTNode *node = (ASTNode *)malloc(sizeof(ASTNode));
@@ -14,7 +15,14 @@ static ASTNode *create_ast_node(ASTNodeType type, char *value, ASTNode *left, AS
 
 static void consume(Parser *parser, LexTokenType expected_type) {
     if (parser->current_token.type != expected_type) {
-        fprintf(stderr, "Syntax Error: Expected token %d but got %d\n", expected_type, parser->current_token.type);
+        int line = 0, col = 0;
+        compute_line_col(parser->lexer->input, parser->current_token.start, &line, &col);
+        fprintf(stderr,
+                "Syntax Error at %d:%d: Expected %s but got %s ('%s')\n",
+                line, col,
+                token_type_name(expected_type),
+                token_type_name(parser->current_token.type),
+                parser->current_token.value ? parser->current_token.value : "");
         exit(1);
     }
     free_token(parser->current_token);
@@ -33,7 +41,12 @@ ASTNode *parse_program(Parser *parser) {
 ASTNode *parse_function(Parser *parser) {
     consume(parser, TOKEN_KEYWORD_INT); 
     if (parser->current_token.type != TOKEN_IDENTIFIER) {
-        fprintf(stderr, "Syntax Error: Expected function name\n");
+        int line = 0, col = 0;
+        compute_line_col(parser->lexer->input, parser->current_token.start, &line, &col);
+        fprintf(stderr, "Syntax Error at %d:%d: Expected function name, got %s ('%s')\n",
+                line, col,
+                token_type_name(parser->current_token.type),
+                parser->current_token.value ? parser->current_token.value : "");
         exit(1);
     }
 
@@ -80,7 +93,12 @@ ASTNode *parse_expression(Parser *parser) {
         consume(parser, TOKEN_CLOSE_PAREN);
         return inner_expr;
     } else {
-        fprintf(stderr, "Syntax Error: Expected an expression\n");
+        int line = 0, col = 0;
+        compute_line_col(parser->lexer->input, parser->current_token.start, &line, &col);
+        fprintf(stderr, "Syntax Error at %d:%d: Expected an expression, got %s ('%s')\n",
+                line, col,
+                token_type_name(parser->current_token.type),
+                parser->current_token.value ? parser->current_token.value : "");
         exit(1);
     }
 }
