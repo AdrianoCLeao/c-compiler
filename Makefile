@@ -46,4 +46,8 @@ clean:
 run: $(TARGET)
 	@$(EXECUTABLE) $(ARGS)
 
+.PHONY: help
+help: $(TARGET)
+	@$(EXECUTABLE) --help || true
+
 .PHONY: all clean run lib
