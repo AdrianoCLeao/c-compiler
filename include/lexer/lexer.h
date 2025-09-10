@@ -17,6 +17,10 @@ typedef enum {
     TOKEN_TILDE,
     TOKEN_NEGATION,
     TOKEN_DECREMENT,
+    TOKEN_PLUS,
+    TOKEN_STAR,
+    TOKEN_SLASH,
+    TOKEN_PERCENT,
     TOKEN_EOF,
 } LexTokenType;
 

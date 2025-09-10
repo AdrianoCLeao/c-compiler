@@ -98,6 +98,10 @@ Token lexer_next_token(Lexer *lexer) {
         case '}': return make_token(TOKEN_CLOSE_BRACE, "}", 1, lexer->position - 1);
         case ';': return make_token(TOKEN_SEMICOLON, ";", 1, lexer->position - 1);
         case '~': return make_token(TOKEN_TILDE, "~", 1, lexer->position - 1);
+        case '+': return make_token(TOKEN_PLUS, "+", 1, lexer->position - 1);
+        case '*': return make_token(TOKEN_STAR, "*", 1, lexer->position - 1);
+        case '/': return make_token(TOKEN_SLASH, "/", 1, lexer->position - 1);
+        case '%': return make_token(TOKEN_PERCENT, "%", 1, lexer->position - 1);
         case '-':
             if (lexer->input[lexer->position] == '-') {
                 lexer->position++;

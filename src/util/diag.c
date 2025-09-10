@@ -26,8 +26,11 @@ const char *token_type_name(LexTokenType t) {
         case TOKEN_TILDE: return "TOKEN_TILDE";
         case TOKEN_NEGATION: return "TOKEN_NEGATION";
         case TOKEN_DECREMENT: return "TOKEN_DECREMENT";
+        case TOKEN_PLUS: return "TOKEN_PLUS";
+        case TOKEN_STAR: return "TOKEN_STAR";
+        case TOKEN_SLASH: return "TOKEN_SLASH";
+        case TOKEN_PERCENT: return "TOKEN_PERCENT";
         case TOKEN_EOF: return "TOKEN_EOF";
         default: return "TOKEN_UNKNOWN";
     }
 }
-
