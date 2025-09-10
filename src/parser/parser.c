@@ -72,7 +72,52 @@ ASTNode *parse_statement(Parser *parser) {
     return create_ast_node(AST_STATEMENT_RETURN, NULL, expr, NULL);
 }
 
-ASTNode *parse_expression(Parser *parser) {
+static int precedence(LexTokenType t) {
+    switch (t) {
+        case TOKEN_STAR:
+        case TOKEN_SLASH:
+        case TOKEN_PERCENT:
+            return 20;
+        case TOKEN_PLUS:
+        case TOKEN_NEGATION: // binary minus
+            return 10;
+        default:
+            return -1;
+    }
+}
+
+static ASTNodeType binop_node_type(LexTokenType t) {
+    switch (t) {
+        case TOKEN_PLUS: return AST_EXPRESSION_ADD;
+        case TOKEN_NEGATION: return AST_EXPRESSION_SUBTRACT;
+        case TOKEN_STAR: return AST_EXPRESSION_MULTIPLY;
+        case TOKEN_SLASH: return AST_EXPRESSION_DIVIDE;
+        case TOKEN_PERCENT: return AST_EXPRESSION_REMAINDER;
+        default: return AST_EXPRESSION_ADD; // unreachable for non-binops
+    }
+}
+
+static ASTNode *parse_factor(Parser *parser);
+static ASTNode *parse_binary_expr(Parser *parser, int min_prec) {
+    ASTNode *left = parse_factor(parser);
+
+    for (;;) {
+        LexTokenType op_tok = parser->current_token.type;
+        int prec = precedence(op_tok);
+        if (prec < min_prec) break;
+
+        consume(parser, op_tok);
+
+        int next_min_prec = prec + 1;
+        ASTNode *right = parse_binary_expr(parser, next_min_prec);
+
+        left = create_ast_node(binop_node_type(op_tok), NULL, left, right);
+    }
+
+    return left;
+}
+
+static ASTNode *parse_factor(Parser *parser) {
     if (parser->current_token.type == TOKEN_CONSTANT) {
         ASTNode *constant = create_ast_node(AST_EXPRESSION_CONSTANT, parser->current_token.value, NULL, NULL);
         consume(parser, TOKEN_CONSTANT);
@@ -80,7 +125,7 @@ ASTNode *parse_expression(Parser *parser) {
     } else if (parser->current_token.type == TOKEN_NEGATION || parser->current_token.type == TOKEN_TILDE) {
         LexTokenType op = parser->current_token.type;
         consume(parser, op);
-        ASTNode *inner_expr = parse_expression(parser);
+        ASTNode *inner_expr = parse_factor(parser);
         return create_ast_node(
             (op == TOKEN_NEGATION) ? AST_EXPRESSION_NEGATE : AST_EXPRESSION_COMPLEMENT,
             NULL,
@@ -89,7 +134,7 @@ ASTNode *parse_expression(Parser *parser) {
         );
     } else if (parser->current_token.type == TOKEN_OPEN_PAREN) {
         consume(parser, TOKEN_OPEN_PAREN);
-        ASTNode *inner_expr = parse_expression(parser);
+        ASTNode *inner_expr = parse_binary_expr(parser, 0);
         consume(parser, TOKEN_CLOSE_PAREN);
         return inner_expr;
     } else {
@@ -101,6 +146,10 @@ ASTNode *parse_expression(Parser *parser) {
                 parser->current_token.value ? parser->current_token.value : "");
         exit(1);
     }
+}
+
+ASTNode *parse_expression(Parser *parser) {
+    return parse_binary_expr(parser, 0);
 }
 
 void free_ast(ASTNode *node) {
@@ -139,6 +188,21 @@ void print_ast(ASTNode *node, int depth) {
             break;
         case AST_EXPRESSION_COMPLEMENT:
             printf("Complement\n");
+            break;
+        case AST_EXPRESSION_ADD:
+            printf("Add\n");
+            break;
+        case AST_EXPRESSION_SUBTRACT:
+            printf("Subtract\n");
+            break;
+        case AST_EXPRESSION_MULTIPLY:
+            printf("Multiply\n");
+            break;
+        case AST_EXPRESSION_DIVIDE:
+            printf("Divide\n");
+            break;
+        case AST_EXPRESSION_REMAINDER:
+            printf("Remainder\n");
             break;
         default:
             printf("Unknown Node\n");
