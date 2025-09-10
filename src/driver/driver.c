@@ -9,19 +9,35 @@ static int has_prefix(const char *s, const char *p) {
 
 void driver_print_usage(const char *prog) {
     fprintf(stderr,
-            "Usage: %s [--lex | --parse | --tacky | --codegen] [-S] [--dump-tokens[=<path>]] [--dump-ast[=txt|dot|json] [--dump-ast-path=<path>]] [--dump-tacky[=txt|json] [--dump-tacky-path=<path>]] [--quiet] <source.c>\n"
-            "  --lex       Run lexer only (no files written)\n"
-            "  --parse     Run lexer+parser (no files written)\n"
-            "  --tacky     Run up to TACKY generation (no files written)\n"
-            "  --codegen   Run up to assembly generation (no files written)\n"
-            "  -S          Emit assembly .s file (no assemble/link)\n"
-            "  --dump-tokens[=<path>]  Dump token stream to file (default under out/)\n"
-            "  --dump-ast[=fmt]        Dump AST in fmt: txt (default), dot, or json\n"
+            "Usage: %s [--lex | --parse | --tacky | --codegen] [-S] [--dump-tokens[=<path>]] [--dump-ast[=txt|dot|json] [--dump-ast-path=<path>]] [--dump-tacky[=txt|json] [--dump-tacky-path=<path>]] [--quiet] [--help|-h] <source.c>\n\n"
+            "Stages (choose at most one):\n"
+            "  --lex                   Run lexer only (no files written)\n"
+            "  --parse                 Run lexer+parser (no files written)\n"
+            "  --tacky                 Run up to TACKY generation (no files written)\n"
+            "  --codegen               Run up to assembly IR generation (no emission)\n\n"
+            "Emission:\n"
+            "  -S                      Emit assembly .s file next to source (no assemble/link)\n\n"
+            "Dumpers (write under out/ by default):\n"
+            "  --dump-tokens[=<path>]  Dump token stream to <path> or out/<name>.tokens\n"
+            "  --dump-ast[=fmt]        Dump AST: fmt = txt (default), dot, json\n"
             "  --dump-ast-path=<path>  Override AST dump path\n"
-            "  --dump-tacky[=fmt]      Dump TACKY in fmt: txt (default) or json\n"
-            "  --dump-tacky-path=<path> Override TACKY dump path\n"
-            "  --quiet                 Suppress stdout prints for AST/assembly\n",
-            prog);
+            "  --dump-tacky[=fmt]      Dump TACKY: fmt = txt (default) or json\n"
+            "  --dump-tacky-path=<path> Override TACKY dump path\n\n"
+            "Output control:\n"
+            "  --quiet                 Suppress stdout prints for AST/assembly\n"
+            "  --help, -h              Show this help and exit\n\n"
+            "Defaults and notes:\n"
+            "  • Without a stage flag, the full pipeline runs and prints AST and assembly.\n"
+            "  • When a stage flag is used, -S is ignored (no emission in partial stages).\n"
+            "  • Only one stage flag may be provided.\n"
+            "  • Dumpers create files under ./out using the input basename.\n\n"
+            "Examples:\n"
+            "  %s examples/neg.c\n"
+            "  %s --lex examples/neg.c\n"
+            "  %s --parse --dump-ast=dot examples/neg.c\n"
+            "  %s --tacky --dump-tacky=json examples/neg.c\n"
+            "  %s -S --quiet examples/neg.c\n",
+            prog, prog, prog, prog, prog, prog);
 }
 
 static char *xstrdup_local(const char *s) {
@@ -52,6 +68,10 @@ DriverOptions driver_parse_args(int argc, char **argv) {
 
     for (int i = 1; i < argc; i++) {
         const char *arg = argv[i];
+        if (strcmp(arg, "--help") == 0 || strcmp(arg, "-h") == 0) {
+            driver_print_usage(argv[0]);
+            exit(0);
+        }
         if (strcmp(arg, "--lex") == 0) {
             if (opts.stage != DRIVER_STAGE_FULL) {
                 fprintf(stderr, "Error: Multiple stage flags provided.\n");
