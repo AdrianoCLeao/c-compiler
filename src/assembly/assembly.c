@@ -40,10 +40,57 @@ static void append_instr(AssemblyInstruction **head, AssemblyInstruction **tail,
     else { (*tail)->next = ins; *tail = ins; }
 }
 
-static AssemblyInstruction *generate_instructions_from_tacky(TackyFunction *fn) {
+static int is_name_in_list(char **names, int count, const char *name) {
+    for (int i = 0; i < count; i++) {
+        if (strcmp(names[i], name) == 0) return 1;
+    }
+    return 0;
+}
+
+static int collect_temp_vars(TackyFunction *fn, char ***out_names) {
+    int cap = 16, count = 0;
+    char **names = (char **)malloc(sizeof(char*) * cap);
+    for (TackyInstr *ins = fn->body; ins; ins = ins->next) {
+        if (ins->kind == TACKY_INSTR_UNARY && ins->un_dst) {
+            if (!is_name_in_list(names, count, ins->un_dst)) {
+                if (count == cap) { cap *= 2; names = (char**)realloc(names, sizeof(char*) * cap); }
+                names[count++] = strdup(ins->un_dst);
+            }
+        } else if (ins->kind == TACKY_INSTR_BINARY && ins->bin_dst) {
+            if (!is_name_in_list(names, count, ins->bin_dst)) {
+                if (count == cap) { cap *= 2; names = (char**)realloc(names, sizeof(char*) * cap); }
+                names[count++] = strdup(ins->bin_dst);
+            }
+        }
+    }
+    *out_names = names;
+    return count;
+}
+
+static int slot_offset_for(char **names, int n, const char *name) {
+    for (int i = 0; i < n; i++) {
+        if (strcmp(names[i], name) == 0) {
+            // Slots are -4, -8, ... relative to %rbp
+            return -4 * (i + 1);
+        }
+    }
+    return 0; // shouldn't happen
+}
+
+static const char *reg32_name(int id) {
+    switch (id) {
+        case 0: return "eax";
+        case 1: return "ecx";
+        case 2: return "edx";
+        case 3: return "ebp";
+        default: return "eax";
+    }
+}
+
+static AssemblyInstruction *generate_instructions_from_tacky(TackyFunction *fn, char **slot_names, int nslots) {
     if (!fn) return NULL;
     AssemblyInstruction *head = NULL, *tail = NULL;
-
+    (void)nslots; // currently unused directly here
     char *eax_var = NULL;
     for (TackyInstr *ins = fn->body; ins; ins = ins->next) {
         switch (ins->kind) {
@@ -52,18 +99,82 @@ static AssemblyInstruction *generate_instructions_from_tacky(TackyFunction *fn) 
                     Operand imm = { .type = OPERAND_IMMEDIATE, .value = ins->un_src.constant };
                     Operand eax = { .type = OPERAND_REGISTER, .value = 0 };
                     append_instr(&head, &tail, create_instruction(ASM_MOV, imm, eax));
-                    eax_var = NULL;
                 } else {
-                    if (!eax_var || strcmp(eax_var, ins->un_src.var_name) != 0) {
-                        // In Chapter 2, sequences are linear; treat as error if violated.
-                        fprintf(stderr, "Codegen error: unsupported non-linear TACKY use of %s in unary op.\n", ins->un_src.var_name);
-                        exit(1);
-                    }
+                    // load from slot into %eax
+                    int off = slot_offset_for(slot_names, nslots, ins->un_src.var_name);
+                    Operand mem = { .type = OPERAND_MEM_RBP_OFFSET, .value = off };
+                    Operand eax = { .type = OPERAND_REGISTER, .value = 0 };
+                    append_instr(&head, &tail, create_instruction(ASM_MOV, mem, eax));
                 }
-
                 AssemblyInstructionType op = (ins->un_op == TACKY_UN_NEGATE) ? ASM_NEG : ASM_NOT;
                 append_instr(&head, &tail, create_instruction(op, (Operand){ .type = OPERAND_REGISTER, .value = 0 }, (Operand){0}));
+                if (ins->un_dst) {
+                    int dst_off = slot_offset_for(slot_names, nslots, ins->un_dst);
+                    Operand eax = { .type = OPERAND_REGISTER, .value = 0 };
+                    Operand memdst = { .type = OPERAND_MEM_RBP_OFFSET, .value = dst_off };
+                    append_instr(&head, &tail, create_instruction(ASM_MOV, eax, memdst));
+                }
                 eax_var = ins->un_dst;
+                break;
+            }
+            case TACKY_INSTR_BINARY: {
+                // Load left into %eax, move to %ecx; load right into %eax; perform op
+                if (ins->bin_src1.kind == TACKY_VAL_CONSTANT) {
+                    Operand imm = { .type = OPERAND_IMMEDIATE, .value = ins->bin_src1.constant };
+                    Operand eax = { .type = OPERAND_REGISTER, .value = 0 };
+                    append_instr(&head, &tail, create_instruction(ASM_MOV, imm, eax));
+                } else {
+                    int off = slot_offset_for(slot_names, nslots, ins->bin_src1.var_name);
+                    Operand mem = { .type = OPERAND_MEM_RBP_OFFSET, .value = off };
+                    Operand eax = { .type = OPERAND_REGISTER, .value = 0 };
+                    append_instr(&head, &tail, create_instruction(ASM_MOV, mem, eax));
+                }
+                // movl %eax, %ecx
+                append_instr(&head, &tail, create_instruction(ASM_MOV, (Operand){ .type = OPERAND_REGISTER, .value = 0 }, (Operand){ .type = OPERAND_REGISTER, .value = 1 }));
+
+                // Load right into %eax
+                if (ins->bin_src2.kind == TACKY_VAL_CONSTANT) {
+                    Operand imm = { .type = OPERAND_IMMEDIATE, .value = ins->bin_src2.constant };
+                    Operand eax = { .type = OPERAND_REGISTER, .value = 0 };
+                    append_instr(&head, &tail, create_instruction(ASM_MOV, imm, eax));
+                } else {
+                    int off = slot_offset_for(slot_names, nslots, ins->bin_src2.var_name);
+                    Operand mem = { .type = OPERAND_MEM_RBP_OFFSET, .value = off };
+                    Operand eax = { .type = OPERAND_REGISTER, .value = 0 };
+                    append_instr(&head, &tail, create_instruction(ASM_MOV, mem, eax));
+                }
+
+                switch (ins->bin_op) {
+                    case TACKY_BIN_ADD:
+                        append_instr(&head, &tail, create_instruction(ASM_ADD_ECX_EAX, (Operand){0}, (Operand){0}));
+                        break;
+                    case TACKY_BIN_SUB:
+                        append_instr(&head, &tail, create_instruction(ASM_SUB_EAX_ECX, (Operand){0}, (Operand){0}));
+                        break;
+                    case TACKY_BIN_MUL:
+                        append_instr(&head, &tail, create_instruction(ASM_IMUL_ECX_EAX, (Operand){0}, (Operand){0}));
+                        break;
+                    case TACKY_BIN_DIV:
+                        // %eax = right, %ecx = left; swap so %eax = left, then cltd; idiv %ecx; quotient in %eax
+                        append_instr(&head, &tail, create_instruction(ASM_XCHG_EAX_ECX, (Operand){0}, (Operand){0}));
+                        append_instr(&head, &tail, create_instruction(ASM_CLTD, (Operand){0}, (Operand){0}));
+                        append_instr(&head, &tail, create_instruction(ASM_IDIV_ECX, (Operand){0}, (Operand){0}));
+                        break;
+                    case TACKY_BIN_REM:
+                        append_instr(&head, &tail, create_instruction(ASM_XCHG_EAX_ECX, (Operand){0}, (Operand){0}));
+                        append_instr(&head, &tail, create_instruction(ASM_CLTD, (Operand){0}, (Operand){0}));
+                        append_instr(&head, &tail, create_instruction(ASM_IDIV_ECX, (Operand){0}, (Operand){0}));
+                        append_instr(&head, &tail, create_instruction(ASM_MOV_EDX_EAX, (Operand){0}, (Operand){0}));
+                        break;
+                }
+
+                if (ins->bin_dst) {
+                    int dst_off = slot_offset_for(slot_names, nslots, ins->bin_dst);
+                    Operand eax = { .type = OPERAND_REGISTER, .value = 0 };
+                    Operand memdst = { .type = OPERAND_MEM_RBP_OFFSET, .value = dst_off };
+                    append_instr(&head, &tail, create_instruction(ASM_MOV, eax, memdst));
+                    eax_var = ins->bin_dst;
+                }
                 break;
             }
             case TACKY_INSTR_RETURN: {
@@ -72,10 +183,11 @@ static AssemblyInstruction *generate_instructions_from_tacky(TackyFunction *fn) 
                     Operand eax = { .type = OPERAND_REGISTER, .value = 0 };
                     append_instr(&head, &tail, create_instruction(ASM_MOV, imm, eax));
                 } else {
-                    if (!eax_var || strcmp(eax_var, ins->ret_val.var_name) != 0) {
-                        fprintf(stderr, "Codegen error: return of non-eax var %s unsupported in Chapter 2.\n", ins->ret_val.var_name);
-                        exit(1);
-                    }
+                    // load from slot into %eax
+                    int off = slot_offset_for(slot_names, nslots, ins->ret_val.var_name);
+                    Operand mem = { .type = OPERAND_MEM_RBP_OFFSET, .value = off };
+                    Operand eax = { .type = OPERAND_REGISTER, .value = 0 };
+                    append_instr(&head, &tail, create_instruction(ASM_MOV, mem, eax));
                 }
                 append_instr(&head, &tail, create_instruction(ASM_RET, (Operand){0}, (Operand){0}));
                 break;
@@ -95,7 +207,17 @@ AssemblyProgram *generate_assembly(TackyProgram *tacky) {
     AssemblyProgram *program = (AssemblyProgram *)malloc(sizeof(AssemblyProgram));
     program->function = (AssemblyFunction *)malloc(sizeof(AssemblyFunction));
     program->function->name = strdup(tacky->fn->name);
-    program->function->instructions = generate_instructions_from_tacky(tacky->fn);
+
+    char **slots = NULL;
+    int nslots = collect_temp_vars(tacky->fn, &slots);
+    int raw = nslots * 4;
+    int aligned = ((raw + 15) / 16) * 16; // 16-byte alignment
+    program->function->stack_size = aligned;
+
+    program->function->instructions = generate_instructions_from_tacky(tacky->fn, slots, nslots);
+
+    for (int i = 0; i < nslots; i++) free(slots[i]);
+    free(slots);
 
     return program;
 }
@@ -149,15 +271,26 @@ void write_assembly_to_file(AssemblyProgram *program, const char *source_file) {
         return;
     }
 
-    fprintf(file, ".global main\n");
-    fprintf(file, "main:\n");
+    fprintf(file, ".globl %s\n", program->function->name);
+    fprintf(file, "%s:\n", program->function->name);
+    fprintf(file, "  pushq %%rbp\n");
+    fprintf(file, "  movq %%rsp, %%rbp\n");
+    if (program->function->stack_size > 0) {
+        fprintf(file, "  subq $%d, %%rsp\n", program->function->stack_size);
+    }
 
     AssemblyInstruction *instr = program->function->instructions;
     while (instr) {
         switch (instr->type) {
             case ASM_MOV:
-                if (instr->src.type == OPERAND_IMMEDIATE) {
-                    fprintf(file, "  movl $%d, %%eax\n", instr->src.value);
+                if (instr->src.type == OPERAND_IMMEDIATE && instr->dst.type == OPERAND_REGISTER) {
+                    fprintf(file, "  movl $%d, %%%s\n", instr->src.value, reg32_name(instr->dst.value));
+                } else if (instr->src.type == OPERAND_REGISTER && instr->dst.type == OPERAND_REGISTER) {
+                    fprintf(file, "  movl %%%s, %%%s\n", reg32_name(instr->src.value), reg32_name(instr->dst.value));
+                } else if (instr->src.type == OPERAND_MEM_RBP_OFFSET && instr->dst.type == OPERAND_REGISTER) {
+                    fprintf(file, "  movl %d(%%rbp), %%%s\n", instr->src.value, reg32_name(instr->dst.value));
+                } else if (instr->src.type == OPERAND_REGISTER && instr->dst.type == OPERAND_MEM_RBP_OFFSET) {
+                    fprintf(file, "  movl %%%s, %d(%%rbp)\n", reg32_name(instr->src.value), instr->dst.value);
                 }
                 break;
             case ASM_NEG:
@@ -166,7 +299,29 @@ void write_assembly_to_file(AssemblyProgram *program, const char *source_file) {
             case ASM_NOT:
                 fprintf(file, "  notl %%eax\n");
                 break;
+            case ASM_ADD_ECX_EAX:
+                fprintf(file, "  addl %%ecx, %%eax\n");
+                break;
+            case ASM_SUB_EAX_ECX:
+                fprintf(file, "  subl %%eax, %%ecx\n  movl %%ecx, %%eax\n");
+                break;
+            case ASM_IMUL_ECX_EAX:
+                fprintf(file, "  imull %%ecx, %%eax\n");
+                break;
+            case ASM_XCHG_EAX_ECX:
+                fprintf(file, "  xchgl %%eax, %%ecx\n");
+                break;
+            case ASM_CLTD:
+                fprintf(file, "  cltd\n");
+                break;
+            case ASM_IDIV_ECX:
+                fprintf(file, "  idivl %%ecx\n");
+                break;
+            case ASM_MOV_EDX_EAX:
+                fprintf(file, "  movl %%edx, %%eax\n");
+                break;
             case ASM_RET:
+                fprintf(file, "  leave\n");
                 fprintf(file, "  ret\n");
                 break;
         }
@@ -183,13 +338,24 @@ void print_assembly(AssemblyProgram *program) {
 
     printf("Assembly Code:\n");
     printf("%s:\n", program->function->name);
+    printf("  pushq %%rbp\n");
+    printf("  movq %%rsp, %%rbp\n");
+    if (program->function->stack_size > 0) {
+        printf("  subq $%d, %%rsp\n", program->function->stack_size);
+    }
 
     AssemblyInstruction *instr = program->function->instructions;
     while (instr) {
         switch (instr->type) {
             case ASM_MOV:
-                if (instr->src.type == OPERAND_IMMEDIATE)
-                    printf("  movl $%d, %%eax\n", instr->src.value);
+                if (instr->src.type == OPERAND_IMMEDIATE && instr->dst.type == OPERAND_REGISTER)
+                    printf("  movl $%d, %%%s\n", instr->src.value, reg32_name(instr->dst.value));
+                else if (instr->src.type == OPERAND_REGISTER && instr->dst.type == OPERAND_REGISTER)
+                    printf("  movl %%%s, %%%s\n", reg32_name(instr->src.value), reg32_name(instr->dst.value));
+                else if (instr->src.type == OPERAND_MEM_RBP_OFFSET && instr->dst.type == OPERAND_REGISTER)
+                    printf("  movl %d(%%rbp), %%%s\n", instr->src.value, reg32_name(instr->dst.value));
+                else if (instr->src.type == OPERAND_REGISTER && instr->dst.type == OPERAND_MEM_RBP_OFFSET)
+                    printf("  movl %%%s, %d(%%rbp)\n", reg32_name(instr->src.value), instr->dst.value);
                 break;
             case ASM_NEG:
                 printf("  negl %%eax\n");
@@ -197,7 +363,29 @@ void print_assembly(AssemblyProgram *program) {
             case ASM_NOT:
                 printf("  notl %%eax\n");
                 break;
+            case ASM_ADD_ECX_EAX:
+                printf("  addl %%ecx, %%eax\n");
+                break;
+            case ASM_SUB_EAX_ECX:
+                printf("  subl %%eax, %%ecx\n  movl %%ecx, %%eax\n");
+                break;
+            case ASM_IMUL_ECX_EAX:
+                printf("  imull %%ecx, %%eax\n");
+                break;
+            case ASM_XCHG_EAX_ECX:
+                printf("  xchgl %%eax, %%ecx\n");
+                break;
+            case ASM_CLTD:
+                printf("  cltd\n");
+                break;
+            case ASM_IDIV_ECX:
+                printf("  idivl %%ecx\n");
+                break;
+            case ASM_MOV_EDX_EAX:
+                printf("  movl %%edx, %%eax\n");
+                break;
             case ASM_RET:
+                printf("  leave\n");
                 printf("  ret\n");
                 break;
         }

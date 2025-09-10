@@ -48,6 +48,17 @@ static TackyUnaryOp convert_unop(ASTNodeType t) {
     }
 }
 
+static TackyBinaryOp convert_binop(ASTNodeType t) {
+    switch (t) {
+        case AST_EXPRESSION_ADD: return TACKY_BIN_ADD;
+        case AST_EXPRESSION_SUBTRACT: return TACKY_BIN_SUB;
+        case AST_EXPRESSION_MULTIPLY: return TACKY_BIN_MUL;
+        case AST_EXPRESSION_DIVIDE: return TACKY_BIN_DIV;
+        case AST_EXPRESSION_REMAINDER: return TACKY_BIN_REM;
+        default: return TACKY_BIN_ADD; // unreachable
+    }
+}
+
 static TackyVal gen_exp(ASTNode *e, TackyGenCtx *ctx) {
     switch (e->type) {
         case AST_EXPRESSION_CONSTANT: {
@@ -66,8 +77,24 @@ static TackyVal gen_exp(ASTNode *e, TackyGenCtx *ctx) {
             emit_instr(ctx, ins);
             return tv_var(dst);
         }
+        case AST_EXPRESSION_ADD:
+        case AST_EXPRESSION_SUBTRACT:
+        case AST_EXPRESSION_MULTIPLY:
+        case AST_EXPRESSION_DIVIDE:
+        case AST_EXPRESSION_REMAINDER: {
+            TackyVal v1 = gen_exp(e->left, ctx);
+            TackyVal v2 = gen_exp(e->right, ctx);
+            char *dst = make_temp(ctx);
+            TackyInstr *ins = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            ins->kind = TACKY_INSTR_BINARY;
+            ins->bin_op = convert_binop(e->type);
+            ins->bin_src1 = v1;
+            ins->bin_src2 = v2;
+            ins->bin_dst = dst;
+            emit_instr(ctx, ins);
+            return tv_var(dst);
+        }
         default:
-            // For Chapter 2, other nodes should not appear here
             return tv_const(0);
     }
 }
@@ -115,6 +142,23 @@ void tacky_print_txt(TackyProgram *p) {
                 else
                     printf("  %s %s -> %s\n", unop_name(ins->un_op), ins->un_src.var_name, ins->un_dst);
                 break;
+            case TACKY_INSTR_BINARY: {
+                const char *op = "?";
+                switch (ins->bin_op) {
+                    case TACKY_BIN_ADD: op = "Add"; break;
+                    case TACKY_BIN_SUB: op = "Subtract"; break;
+                    case TACKY_BIN_MUL: op = "Multiply"; break;
+                    case TACKY_BIN_DIV: op = "Divide"; break;
+                    case TACKY_BIN_REM: op = "Remainder"; break;
+                }
+                printf("  %s ", op);
+                if (ins->bin_src1.kind == TACKY_VAL_CONSTANT) printf("%d, ", ins->bin_src1.constant);
+                else printf("%s, ", ins->bin_src1.var_name);
+                if (ins->bin_src2.kind == TACKY_VAL_CONSTANT) printf("%d ", ins->bin_src2.constant);
+                else printf("%s ", ins->bin_src2.var_name);
+                printf("-> %s\n", ins->bin_dst);
+                break;
+            }
             case TACKY_INSTR_RETURN:
                 if (ins->ret_val.kind == TACKY_VAL_CONSTANT)
                     printf("  Return %d\n", ins->ret_val.constant);
@@ -156,6 +200,24 @@ void tacky_print_json(TackyProgram *p) {
             if (ins->un_src.kind == TACKY_VAL_CONSTANT) printf("{\"const\": %d}", ins->un_src.constant);
             else { printf("{\"var\": \""); json_escape(stdout, ins->un_src.var_name); printf("\"}"); }
             printf(", \"dst\": \""); json_escape(stdout, ins->un_dst); printf("\"");
+        } else if (ins->kind == TACKY_INSTR_BINARY) {
+            const char *op = "?";
+            switch (ins->bin_op) {
+                case TACKY_BIN_ADD: op = "Add"; break;
+                case TACKY_BIN_SUB: op = "Subtract"; break;
+                case TACKY_BIN_MUL: op = "Multiply"; break;
+                case TACKY_BIN_DIV: op = "Divide"; break;
+                case TACKY_BIN_REM: op = "Remainder"; break;
+            }
+            printf("\"kind\": \"Binary\", ");
+            printf("\"op\": \"%s\", ", op);
+            printf("\"src1\": ");
+            if (ins->bin_src1.kind == TACKY_VAL_CONSTANT) printf("{\"const\": %d}", ins->bin_src1.constant);
+            else { printf("{\"var\": \""); json_escape(stdout, ins->bin_src1.var_name); printf("\"}"); }
+            printf(", \"src2\": ");
+            if (ins->bin_src2.kind == TACKY_VAL_CONSTANT) printf("{\"const\": %d}", ins->bin_src2.constant);
+            else { printf("{\"var\": \""); json_escape(stdout, ins->bin_src2.var_name); printf("\"}"); }
+            printf(", \"dst\": \""); json_escape(stdout, ins->bin_dst); printf("\"");
         } else if (ins->kind == TACKY_INSTR_RETURN) {
             printf("\"kind\": \"Return\", \"value\": ");
             if (ins->ret_val.kind == TACKY_VAL_CONSTANT) printf("{\"const\": %d}", ins->ret_val.constant);
@@ -174,6 +236,8 @@ void tacky_free(TackyProgram *p) {
             TackyInstr *n = ins->next;
             if (ins->kind == TACKY_INSTR_UNARY) {
                 free(ins->un_dst);
+            } else if (ins->kind == TACKY_INSTR_BINARY) {
+                free(ins->bin_dst);
             }
             free(ins);
             ins = n;
@@ -183,4 +247,3 @@ void tacky_free(TackyProgram *p) {
     }
     free(p);
 }
-

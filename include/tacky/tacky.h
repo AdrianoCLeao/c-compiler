@@ -20,8 +20,17 @@ typedef enum {
 } TackyUnaryOp;
 
 typedef enum {
+    TACKY_BIN_ADD,
+    TACKY_BIN_SUB,
+    TACKY_BIN_MUL,
+    TACKY_BIN_DIV,
+    TACKY_BIN_REM
+} TackyBinaryOp;
+
+typedef enum {
     TACKY_INSTR_RETURN,
-    TACKY_INSTR_UNARY
+    TACKY_INSTR_UNARY,
+    TACKY_INSTR_BINARY
 } TackyInstrKind;
 
 typedef struct TackyInstr {
@@ -30,6 +39,11 @@ typedef struct TackyInstr {
     TackyUnaryOp un_op;
     TackyVal un_src;
     char *un_dst; // destination variable name
+
+    TackyBinaryOp bin_op;
+    TackyVal bin_src1;
+    TackyVal bin_src2;
+    char *bin_dst; // destination variable name for binary
 
     struct TackyInstr *next;
 } TackyInstr;
@@ -51,4 +65,3 @@ void tacky_print_json(TackyProgram *p);
 void tacky_free(TackyProgram *p);
 
 #endif
-
