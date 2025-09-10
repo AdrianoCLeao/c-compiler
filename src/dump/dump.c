@@ -93,6 +93,11 @@ static const char *ast_type_name(ASTNodeType t) {
         case AST_EXPRESSION_IDENTIFIER: return "Identifier";
         case AST_EXPRESSION_NEGATE: return "Negate";
         case AST_EXPRESSION_COMPLEMENT: return "Complement";
+        case AST_EXPRESSION_ADD: return "Add";
+        case AST_EXPRESSION_SUBTRACT: return "Subtract";
+        case AST_EXPRESSION_MULTIPLY: return "Multiply";
+        case AST_EXPRESSION_DIVIDE: return "Divide";
+        case AST_EXPRESSION_REMAINDER: return "Remainder";
         default: return "Unknown";
     }
 }
@@ -208,6 +213,24 @@ bool dump_tacky_file(TackyProgram *p, const char *input_path, DumpTackyFormat fm
                 if (ins->un_src.kind == TACKY_VAL_CONSTANT) fprintf(f, "{\"const\": %d}", ins->un_src.constant);
                 else fprintf(f, "{\"var\": \"%s\"}", ins->un_src.var_name);
                 fprintf(f, ", \"dst\": \"%s\"", ins->un_dst);
+            } else if (ins->kind == TACKY_INSTR_BINARY) {
+                const char *op = "?";
+                switch (ins->bin_op) {
+                    case TACKY_BIN_ADD: op = "Add"; break;
+                    case TACKY_BIN_SUB: op = "Subtract"; break;
+                    case TACKY_BIN_MUL: op = "Multiply"; break;
+                    case TACKY_BIN_DIV: op = "Divide"; break;
+                    case TACKY_BIN_REM: op = "Remainder"; break;
+                }
+                fprintf(f, "\"kind\": \"Binary\", ");
+                fprintf(f, "\"op\": \"%s\", ", op);
+                fprintf(f, "\"src1\": ");
+                if (ins->bin_src1.kind == TACKY_VAL_CONSTANT) fprintf(f, "{\"const\": %d}", ins->bin_src1.constant);
+                else fprintf(f, "{\"var\": \"%s\"}", ins->bin_src1.var_name);
+                fprintf(f, ", \"src2\": ");
+                if (ins->bin_src2.kind == TACKY_VAL_CONSTANT) fprintf(f, "{\"const\": %d}", ins->bin_src2.constant);
+                else fprintf(f, "{\"var\": \"%s\"}", ins->bin_src2.var_name);
+                fprintf(f, ", \"dst\": \"%s\"", ins->bin_dst);
             } else if (ins->kind == TACKY_INSTR_RETURN) {
                 fprintf(f, "\"kind\": \"Return\", \"value\": ");
                 if (ins->ret_val.kind == TACKY_VAL_CONSTANT) fprintf(f, "{\"const\": %d}", ins->ret_val.constant);
@@ -226,6 +249,23 @@ bool dump_tacky_file(TackyProgram *p, const char *input_path, DumpTackyFormat fm
                     else
                         fprintf(f, "  %s %s -> %s\n", (ins->un_op == TACKY_UN_NEGATE ? "Negate" : "Complement"), ins->un_src.var_name, ins->un_dst);
                     break;
+                case TACKY_INSTR_BINARY: {
+                    const char *op = "?";
+                    switch (ins->bin_op) {
+                        case TACKY_BIN_ADD: op = "Add"; break;
+                        case TACKY_BIN_SUB: op = "Subtract"; break;
+                        case TACKY_BIN_MUL: op = "Multiply"; break;
+                        case TACKY_BIN_DIV: op = "Divide"; break;
+                        case TACKY_BIN_REM: op = "Remainder"; break;
+                    }
+                    fprintf(f, "  %s ", op);
+                    if (ins->bin_src1.kind == TACKY_VAL_CONSTANT) fprintf(f, "%d, ", ins->bin_src1.constant);
+                    else fprintf(f, "%s, ", ins->bin_src1.var_name);
+                    if (ins->bin_src2.kind == TACKY_VAL_CONSTANT) fprintf(f, "%d ", ins->bin_src2.constant);
+                    else fprintf(f, "%s ", ins->bin_src2.var_name);
+                    fprintf(f, "-> %s\n", ins->bin_dst);
+                    break;
+                }
                 case TACKY_INSTR_RETURN:
                     if (ins->ret_val.kind == TACKY_VAL_CONSTANT)
                         fprintf(f, "  Return %d\n", ins->ret_val.constant);
