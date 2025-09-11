@@ -4,3 +4,7 @@
 /assets
 .DS_Store
 /tmp
+/examples/*/*.s
+/examples/*/*.o
+/examples/*/*.out
+/examples/*/*.exe
