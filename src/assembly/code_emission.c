@@ -202,13 +202,17 @@ int run_executable_and_print_exit(const char *binary_path) {
 #ifndef _WIN32
     pid_t pid;
     const char *prog = binary_path;
-    char stack_buf[PATH_MAX];
+    char *owned = NULL;
     if (strchr(binary_path, '/') == NULL) {
-        snprintf(stack_buf, sizeof(stack_buf), "./%s", binary_path);
-        prog = stack_buf;
+        size_t n = strlen(binary_path) + 3;
+        owned = (char *)malloc(n);
+        if (!owned) { perror("malloc"); return 127; }
+        snprintf(owned, n, "./%s", binary_path);
+        prog = owned;
     }
     char *argv[] = { (char *)prog, NULL };
     int rc = posix_spawnp(&pid, prog, NULL, NULL, argv, environ);
+    if (owned) { free(owned); owned = NULL; }
     if (rc != 0) {
         fprintf(stderr, "Error: failed to spawn %s (rc=%d)\n", binary_path, rc);
         return 127;
