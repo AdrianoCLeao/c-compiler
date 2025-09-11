@@ -25,6 +25,13 @@
     #define PATH_SEPARATOR '/'
 #endif
 
+// On Mach-O platforms (macOS), C symbols in assembly are prefixed with '_'
+#if defined(__APPLE__)
+#define GLOBAL_PREFIX "_"
+#else
+#define GLOBAL_PREFIX ""
+#endif
+
 static AssemblyInstruction *create_instruction(AssemblyInstructionType type, Operand src, Operand dst) {
     AssemblyInstruction *instr = (AssemblyInstruction *)malloc(sizeof(AssemblyInstruction));
     instr->type = type;
@@ -271,62 +278,7 @@ void write_assembly_to_file(AssemblyProgram *program, const char *source_file) {
         return;
     }
 
-    fprintf(file, ".globl %s\n", program->function->name);
-    fprintf(file, "%s:\n", program->function->name);
-    fprintf(file, "  pushq %%rbp\n");
-    fprintf(file, "  movq %%rsp, %%rbp\n");
-    if (program->function->stack_size > 0) {
-        fprintf(file, "  subq $%d, %%rsp\n", program->function->stack_size);
-    }
-
-    AssemblyInstruction *instr = program->function->instructions;
-    while (instr) {
-        switch (instr->type) {
-            case ASM_MOV:
-                if (instr->src.type == OPERAND_IMMEDIATE && instr->dst.type == OPERAND_REGISTER) {
-                    fprintf(file, "  movl $%d, %%%s\n", instr->src.value, reg32_name(instr->dst.value));
-                } else if (instr->src.type == OPERAND_REGISTER && instr->dst.type == OPERAND_REGISTER) {
-                    fprintf(file, "  movl %%%s, %%%s\n", reg32_name(instr->src.value), reg32_name(instr->dst.value));
-                } else if (instr->src.type == OPERAND_MEM_RBP_OFFSET && instr->dst.type == OPERAND_REGISTER) {
-                    fprintf(file, "  movl %d(%%rbp), %%%s\n", instr->src.value, reg32_name(instr->dst.value));
-                } else if (instr->src.type == OPERAND_REGISTER && instr->dst.type == OPERAND_MEM_RBP_OFFSET) {
-                    fprintf(file, "  movl %%%s, %d(%%rbp)\n", reg32_name(instr->src.value), instr->dst.value);
-                }
-                break;
-            case ASM_NEG:
-                fprintf(file, "  negl %%eax\n");
-                break;
-            case ASM_NOT:
-                fprintf(file, "  notl %%eax\n");
-                break;
-            case ASM_ADD_ECX_EAX:
-                fprintf(file, "  addl %%ecx, %%eax\n");
-                break;
-            case ASM_SUB_EAX_ECX:
-                fprintf(file, "  subl %%eax, %%ecx\n  movl %%ecx, %%eax\n");
-                break;
-            case ASM_IMUL_ECX_EAX:
-                fprintf(file, "  imull %%ecx, %%eax\n");
-                break;
-            case ASM_XCHG_EAX_ECX:
-                fprintf(file, "  xchgl %%eax, %%ecx\n");
-                break;
-            case ASM_CLTD:
-                fprintf(file, "  cltd\n");
-                break;
-            case ASM_IDIV_ECX:
-                fprintf(file, "  idivl %%ecx\n");
-                break;
-            case ASM_MOV_EDX_EAX:
-                fprintf(file, "  movl %%edx, %%eax\n");
-                break;
-            case ASM_RET:
-                fprintf(file, "  leave\n");
-                fprintf(file, "  ret\n");
-                break;
-        }
-        instr = instr->next;
-    }
+    write_assembly_to_stream(program, file);
 
     fclose(file);
     printf("Assembly written to: %s\n", output_path);
@@ -337,60 +289,7 @@ void print_assembly(AssemblyProgram *program) {
     if (!program || !program->function) return;
 
     printf("Assembly Code:\n");
-    printf("%s:\n", program->function->name);
-    printf("  pushq %%rbp\n");
-    printf("  movq %%rsp, %%rbp\n");
-    if (program->function->stack_size > 0) {
-        printf("  subq $%d, %%rsp\n", program->function->stack_size);
-    }
-
-    AssemblyInstruction *instr = program->function->instructions;
-    while (instr) {
-        switch (instr->type) {
-            case ASM_MOV:
-                if (instr->src.type == OPERAND_IMMEDIATE && instr->dst.type == OPERAND_REGISTER)
-                    printf("  movl $%d, %%%s\n", instr->src.value, reg32_name(instr->dst.value));
-                else if (instr->src.type == OPERAND_REGISTER && instr->dst.type == OPERAND_REGISTER)
-                    printf("  movl %%%s, %%%s\n", reg32_name(instr->src.value), reg32_name(instr->dst.value));
-                else if (instr->src.type == OPERAND_MEM_RBP_OFFSET && instr->dst.type == OPERAND_REGISTER)
-                    printf("  movl %d(%%rbp), %%%s\n", instr->src.value, reg32_name(instr->dst.value));
-                else if (instr->src.type == OPERAND_REGISTER && instr->dst.type == OPERAND_MEM_RBP_OFFSET)
-                    printf("  movl %%%s, %d(%%rbp)\n", reg32_name(instr->src.value), instr->dst.value);
-                break;
-            case ASM_NEG:
-                printf("  negl %%eax\n");
-                break;
-            case ASM_NOT:
-                printf("  notl %%eax\n");
-                break;
-            case ASM_ADD_ECX_EAX:
-                printf("  addl %%ecx, %%eax\n");
-                break;
-            case ASM_SUB_EAX_ECX:
-                printf("  subl %%eax, %%ecx\n  movl %%ecx, %%eax\n");
-                break;
-            case ASM_IMUL_ECX_EAX:
-                printf("  imull %%ecx, %%eax\n");
-                break;
-            case ASM_XCHG_EAX_ECX:
-                printf("  xchgl %%eax, %%ecx\n");
-                break;
-            case ASM_CLTD:
-                printf("  cltd\n");
-                break;
-            case ASM_IDIV_ECX:
-                printf("  idivl %%ecx\n");
-                break;
-            case ASM_MOV_EDX_EAX:
-                printf("  movl %%edx, %%eax\n");
-                break;
-            case ASM_RET:
-                printf("  leave\n");
-                printf("  ret\n");
-                break;
-        }
-        instr = instr->next;
-    }
+    write_assembly_to_stream(program, stdout);
 }
 
 void free_assembly(AssemblyProgram *program) {
@@ -406,4 +305,65 @@ void free_assembly(AssemblyProgram *program) {
     free(program->function->name);
     free(program->function);
     free(program);
+}
+
+void write_assembly_to_stream(AssemblyProgram *program, FILE *out) {
+    if (!program || !program->function || !out) return;
+
+    fprintf(out, ".globl %s%s\n", GLOBAL_PREFIX, program->function->name);
+    fprintf(out, "%s%s:\n", GLOBAL_PREFIX, program->function->name);
+    fprintf(out, "  pushq %%rbp\n");
+    fprintf(out, "  movq %%rsp, %%rbp\n");
+    if (program->function->stack_size > 0) {
+        fprintf(out, "  subq $%d, %%rsp\n", program->function->stack_size);
+    }
+
+    AssemblyInstruction *instr = program->function->instructions;
+    while (instr) {
+        switch (instr->type) {
+            case ASM_MOV:
+                if (instr->src.type == OPERAND_IMMEDIATE && instr->dst.type == OPERAND_REGISTER) {
+                    fprintf(out, "  movl $%d, %%%s\n", instr->src.value, reg32_name(instr->dst.value));
+                } else if (instr->src.type == OPERAND_REGISTER && instr->dst.type == OPERAND_REGISTER) {
+                    fprintf(out, "  movl %%%s, %%%s\n", reg32_name(instr->src.value), reg32_name(instr->dst.value));
+                } else if (instr->src.type == OPERAND_MEM_RBP_OFFSET && instr->dst.type == OPERAND_REGISTER) {
+                    fprintf(out, "  movl %d(%%rbp), %%%s\n", instr->src.value, reg32_name(instr->dst.value));
+                } else if (instr->src.type == OPERAND_REGISTER && instr->dst.type == OPERAND_MEM_RBP_OFFSET) {
+                    fprintf(out, "  movl %%%s, %d(%%rbp)\n", reg32_name(instr->src.value), instr->dst.value);
+                }
+                break;
+            case ASM_NEG:
+                fprintf(out, "  negl %%eax\n");
+                break;
+            case ASM_NOT:
+                fprintf(out, "  notl %%eax\n");
+                break;
+            case ASM_ADD_ECX_EAX:
+                fprintf(out, "  addl %%ecx, %%eax\n");
+                break;
+            case ASM_SUB_EAX_ECX:
+                fprintf(out, "  subl %%eax, %%ecx\n  movl %%ecx, %%eax\n");
+                break;
+            case ASM_IMUL_ECX_EAX:
+                fprintf(out, "  imull %%ecx, %%eax\n");
+                break;
+            case ASM_XCHG_EAX_ECX:
+                fprintf(out, "  xchgl %%eax, %%ecx\n");
+                break;
+            case ASM_CLTD:
+                fprintf(out, "  cltd\n");
+                break;
+            case ASM_IDIV_ECX:
+                fprintf(out, "  idivl %%ecx\n");
+                break;
+            case ASM_MOV_EDX_EAX:
+                fprintf(out, "  movl %%edx, %%eax\n");
+                break;
+            case ASM_RET:
+                fprintf(out, "  leave\n");
+                fprintf(out, "  ret\n");
+                break;
+        }
+        instr = instr->next;
+    }
 }

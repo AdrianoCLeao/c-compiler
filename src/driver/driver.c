@@ -25,9 +25,10 @@ void driver_print_usage(const char *prog) {
             "  --dump-tacky-path=<path> Override TACKY dump path\n\n"
             "Output control:\n"
             "  --quiet                 Suppress stdout prints for AST/assembly\n"
+            "  --run                   Run the produced executable and print its exit code (full pipeline only)\n"
             "  --help, -h              Show this help and exit\n\n"
             "Defaults and notes:\n"
-            "  • Without a stage flag, the full pipeline runs and prints AST and assembly.\n"
+            "  • Without a stage flag, the full pipeline runs, prints AST/assembly, and builds an executable via cc (pipe).\n"
             "  • When a stage flag is used, -S is ignored (no emission in partial stages).\n"
             "  • Only one stage flag may be provided.\n"
             "  • Dumpers create files under ./out using the input basename.\n\n"
@@ -58,6 +59,7 @@ DriverOptions driver_parse_args(int argc, char **argv) {
     opts.dump_ast_format = DUMP_AST_NONE;
     opts.dump_ast_path = NULL;
     opts.quiet = false;
+    opts.run_exec = false;
     opts.dump_tacky_format = DUMP_TACKY_NONE;
     opts.dump_tacky_path = NULL;
 
@@ -104,6 +106,8 @@ DriverOptions driver_parse_args(int argc, char **argv) {
             opts.emit_asm = true;
         } else if (strcmp(arg, "--quiet") == 0) {
             opts.quiet = true;
+        } else if (strcmp(arg, "--run") == 0) {
+            opts.run_exec = true;
         } else if (has_prefix(arg, "--dump-tokens")) {
             opts.dump_tokens = true;
             const char *eq = strchr(arg, '=');

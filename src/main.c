@@ -184,6 +184,13 @@ int main(int argc, char *argv[]) {
 
     if (opts.emit_asm) {
         write_assembly_to_file(assembly, opts.input_path);
+    } else {
+        int rc = emit_executable_via_cc_pipe(assembly, opts.input_path);
+        if (rc == 0 && opts.run_exec) {
+            char *bin = get_output_binary_path(opts.input_path);
+            (void)run_executable_and_print_exit(bin);
+            free(bin);
+        }
     }
 
     if (opts.dump_tokens) {
@@ -195,9 +202,6 @@ int main(int argc, char *argv[]) {
     if (opts.dump_tacky_format != DUMP_TACKY_NONE) {
         (void)dump_tacky_file(tacky, opts.input_path, opts.dump_tacky_format, opts.dump_tacky_path);
     }
-
-    // For now, wont assemble by default
-    // emit_code(opts.input_path);
 
     free_ast(ast);
     tacky_free(tacky);
