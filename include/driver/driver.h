@@ -24,6 +24,7 @@ typedef struct {
     DumpTackyFormat dump_tacky_format;
     char *dump_tacky_path;
     bool quiet;
+    bool run_exec;
 } DriverOptions;
 
 DriverOptions driver_parse_args(int argc, char **argv);

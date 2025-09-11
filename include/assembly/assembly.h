@@ -2,6 +2,7 @@
 #define ASSEMBLY_H
 
 #include "../tacky/tacky.h"
+#include <stdio.h>
 
 typedef enum {
     ASM_MOV,
@@ -50,5 +51,6 @@ void print_assembly(AssemblyProgram *program);
 void free_assembly(AssemblyProgram *program);
 char *get_output_assembly_path(const char *source_file);
 void write_assembly_to_file(AssemblyProgram *program, const char *source_file);
+void write_assembly_to_stream(AssemblyProgram *program, FILE *stream);
 
 #endif 
