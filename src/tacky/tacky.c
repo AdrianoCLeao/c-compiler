@@ -5,6 +5,7 @@
 
 typedef struct {
     int temp_counter;
+    int label_counter;
     TackyInstr *head;
     TackyInstr *tail;
 } TackyGenCtx;
@@ -20,6 +21,12 @@ static char *xstrdup_local(const char *s) {
 static char *make_temp(TackyGenCtx *ctx) {
     char buf[32];
     snprintf(buf, sizeof(buf), "t%d", ctx->temp_counter++);
+    return xstrdup_local(buf);
+}
+
+static char *make_label(TackyGenCtx *ctx, const char *prefix) {
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%s%d", prefix, ctx->label_counter++);
     return xstrdup_local(buf);
 }
 
@@ -44,6 +51,7 @@ static TackyUnaryOp convert_unop(ASTNodeType t) {
     switch (t) {
         case AST_EXPRESSION_NEGATE: return TACKY_UN_NEGATE;
         case AST_EXPRESSION_COMPLEMENT: return TACKY_UN_COMPLEMENT;
+        case AST_EXPRESSION_NOT: return TACKY_UN_NOT;
         default: return TACKY_UN_NEGATE; // unreachable for Chapter 2
     }
 }
@@ -55,6 +63,12 @@ static TackyBinaryOp convert_binop(ASTNodeType t) {
         case AST_EXPRESSION_MULTIPLY: return TACKY_BIN_MUL;
         case AST_EXPRESSION_DIVIDE: return TACKY_BIN_DIV;
         case AST_EXPRESSION_REMAINDER: return TACKY_BIN_REM;
+        case AST_EXPRESSION_EQUAL: return TACKY_BIN_EQUAL;
+        case AST_EXPRESSION_NOT_EQUAL: return TACKY_BIN_NOT_EQUAL;
+        case AST_EXPRESSION_LESS_THAN: return TACKY_BIN_LESS;
+        case AST_EXPRESSION_LESS_EQUAL: return TACKY_BIN_LESS_EQUAL;
+        case AST_EXPRESSION_GREATER_THAN: return TACKY_BIN_GREATER;
+        case AST_EXPRESSION_GREATER_EQUAL: return TACKY_BIN_GREATER_EQUAL;
         default: return TACKY_BIN_ADD; // unreachable
     }
 }
@@ -66,7 +80,8 @@ static TackyVal gen_exp(ASTNode *e, TackyGenCtx *ctx) {
             return tv_const(v);
         }
         case AST_EXPRESSION_NEGATE:
-        case AST_EXPRESSION_COMPLEMENT: {
+        case AST_EXPRESSION_COMPLEMENT:
+        case AST_EXPRESSION_NOT: {
             TackyVal src = gen_exp(e->left, ctx);
             char *dst = make_temp(ctx);
             TackyInstr *ins = (TackyInstr *)calloc(1, sizeof(TackyInstr));
@@ -81,7 +96,13 @@ static TackyVal gen_exp(ASTNode *e, TackyGenCtx *ctx) {
         case AST_EXPRESSION_SUBTRACT:
         case AST_EXPRESSION_MULTIPLY:
         case AST_EXPRESSION_DIVIDE:
-        case AST_EXPRESSION_REMAINDER: {
+        case AST_EXPRESSION_REMAINDER:
+        case AST_EXPRESSION_EQUAL:
+        case AST_EXPRESSION_NOT_EQUAL:
+        case AST_EXPRESSION_LESS_THAN:
+        case AST_EXPRESSION_LESS_EQUAL:
+        case AST_EXPRESSION_GREATER_THAN:
+        case AST_EXPRESSION_GREATER_EQUAL: {
             TackyVal v1 = gen_exp(e->left, ctx);
             TackyVal v2 = gen_exp(e->right, ctx);
             char *dst = make_temp(ctx);
@@ -93,6 +114,102 @@ static TackyVal gen_exp(ASTNode *e, TackyGenCtx *ctx) {
             ins->bin_dst = dst;
             emit_instr(ctx, ins);
             return tv_var(dst);
+        }
+        case AST_EXPRESSION_LOGICAL_AND: {
+            TackyVal left = gen_exp(e->left, ctx);
+            char *result = make_temp(ctx);
+            char *false_label = make_label(ctx, "and_false");
+            char *end_label = make_label(ctx, "and_end");
+
+            TackyInstr *jump1 = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            jump1->kind = TACKY_INSTR_JUMP_IF_ZERO;
+            jump1->cond_val = left;
+            jump1->jump_target = xstrdup_local(false_label);
+            emit_instr(ctx, jump1);
+
+            TackyVal right = gen_exp(e->right, ctx);
+            TackyInstr *jump2 = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            jump2->kind = TACKY_INSTR_JUMP_IF_ZERO;
+            jump2->cond_val = right;
+            jump2->jump_target = xstrdup_local(false_label);
+            emit_instr(ctx, jump2);
+
+            TackyInstr *copy_true = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            copy_true->kind = TACKY_INSTR_COPY;
+            copy_true->copy_src = tv_const(1);
+            copy_true->copy_dst = result;
+            emit_instr(ctx, copy_true);
+
+            TackyInstr *jump_end = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            jump_end->kind = TACKY_INSTR_JUMP;
+            jump_end->jump_target = xstrdup_local(end_label);
+            emit_instr(ctx, jump_end);
+
+            TackyInstr *label_false = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            label_false->kind = TACKY_INSTR_LABEL;
+            label_false->label = false_label;
+            emit_instr(ctx, label_false);
+
+            TackyInstr *copy_false = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            copy_false->kind = TACKY_INSTR_COPY;
+            copy_false->copy_src = tv_const(0);
+            copy_false->copy_dst = xstrdup_local(result);
+            emit_instr(ctx, copy_false);
+
+            TackyInstr *label_end = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            label_end->kind = TACKY_INSTR_LABEL;
+            label_end->label = end_label;
+            emit_instr(ctx, label_end);
+
+            return tv_var(result);
+        }
+        case AST_EXPRESSION_LOGICAL_OR: {
+            TackyVal left = gen_exp(e->left, ctx);
+            char *result = make_temp(ctx);
+            char *true_label = make_label(ctx, "or_true");
+            char *end_label = make_label(ctx, "or_end");
+
+            TackyInstr *jump1 = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            jump1->kind = TACKY_INSTR_JUMP_IF_NOT_ZERO;
+            jump1->cond_val = left;
+            jump1->jump_target = xstrdup_local(true_label);
+            emit_instr(ctx, jump1);
+
+            TackyVal right = gen_exp(e->right, ctx);
+            TackyInstr *jump2 = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            jump2->kind = TACKY_INSTR_JUMP_IF_NOT_ZERO;
+            jump2->cond_val = right;
+            jump2->jump_target = xstrdup_local(true_label);
+            emit_instr(ctx, jump2);
+
+            TackyInstr *copy_false = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            copy_false->kind = TACKY_INSTR_COPY;
+            copy_false->copy_src = tv_const(0);
+            copy_false->copy_dst = result;
+            emit_instr(ctx, copy_false);
+
+            TackyInstr *jump_end = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            jump_end->kind = TACKY_INSTR_JUMP;
+            jump_end->jump_target = xstrdup_local(end_label);
+            emit_instr(ctx, jump_end);
+
+            TackyInstr *label_true = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            label_true->kind = TACKY_INSTR_LABEL;
+            label_true->label = true_label;
+            emit_instr(ctx, label_true);
+
+            TackyInstr *copy_true = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            copy_true->kind = TACKY_INSTR_COPY;
+            copy_true->copy_src = tv_const(1);
+            copy_true->copy_dst = xstrdup_local(result);
+            emit_instr(ctx, copy_true);
+
+            TackyInstr *label_end = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            label_end->kind = TACKY_INSTR_LABEL;
+            label_end->label = end_label;
+            emit_instr(ctx, label_end);
+
+            return tv_var(result);
         }
         default:
             return tv_const(0);
@@ -127,6 +244,24 @@ static const char *unop_name(TackyUnaryOp op) {
     switch (op) {
         case TACKY_UN_NEGATE: return "Negate";
         case TACKY_UN_COMPLEMENT: return "Complement";
+        case TACKY_UN_NOT: return "Not";
+        default: return "?";
+    }
+}
+
+static const char *binop_name(TackyBinaryOp op) {
+    switch (op) {
+        case TACKY_BIN_ADD: return "Add";
+        case TACKY_BIN_SUB: return "Subtract";
+        case TACKY_BIN_MUL: return "Multiply";
+        case TACKY_BIN_DIV: return "Divide";
+        case TACKY_BIN_REM: return "Remainder";
+        case TACKY_BIN_EQUAL: return "Equal";
+        case TACKY_BIN_NOT_EQUAL: return "NotEqual";
+        case TACKY_BIN_LESS: return "LessThan";
+        case TACKY_BIN_LESS_EQUAL: return "LessOrEqual";
+        case TACKY_BIN_GREATER: return "GreaterThan";
+        case TACKY_BIN_GREATER_EQUAL: return "GreaterOrEqual";
         default: return "?";
     }
 }
@@ -143,15 +278,7 @@ void tacky_print_txt(TackyProgram *p) {
                     printf("  %s %s -> %s\n", unop_name(ins->un_op), ins->un_src.var_name, ins->un_dst);
                 break;
             case TACKY_INSTR_BINARY: {
-                const char *op = "?";
-                switch (ins->bin_op) {
-                    case TACKY_BIN_ADD: op = "Add"; break;
-                    case TACKY_BIN_SUB: op = "Subtract"; break;
-                    case TACKY_BIN_MUL: op = "Multiply"; break;
-                    case TACKY_BIN_DIV: op = "Divide"; break;
-                    case TACKY_BIN_REM: op = "Remainder"; break;
-                }
-                printf("  %s ", op);
+                printf("  %s ", binop_name(ins->bin_op));
                 if (ins->bin_src1.kind == TACKY_VAL_CONSTANT) printf("%d, ", ins->bin_src1.constant);
                 else printf("%s, ", ins->bin_src1.var_name);
                 if (ins->bin_src2.kind == TACKY_VAL_CONSTANT) printf("%d ", ins->bin_src2.constant);
@@ -159,6 +286,30 @@ void tacky_print_txt(TackyProgram *p) {
                 printf("-> %s\n", ins->bin_dst);
                 break;
             }
+            case TACKY_INSTR_COPY:
+                printf("  Copy ");
+                if (ins->copy_src.kind == TACKY_VAL_CONSTANT) printf("%d", ins->copy_src.constant);
+                else printf("%s", ins->copy_src.var_name);
+                printf(" -> %s\n", ins->copy_dst);
+                break;
+            case TACKY_INSTR_JUMP:
+                printf("  Jump %s\n", ins->jump_target);
+                break;
+            case TACKY_INSTR_JUMP_IF_ZERO:
+                printf("  JumpIfZero ");
+                if (ins->cond_val.kind == TACKY_VAL_CONSTANT) printf("%d", ins->cond_val.constant);
+                else printf("%s", ins->cond_val.var_name);
+                printf(" -> %s\n", ins->jump_target);
+                break;
+            case TACKY_INSTR_JUMP_IF_NOT_ZERO:
+                printf("  JumpIfNotZero ");
+                if (ins->cond_val.kind == TACKY_VAL_CONSTANT) printf("%d", ins->cond_val.constant);
+                else printf("%s", ins->cond_val.var_name);
+                printf(" -> %s\n", ins->jump_target);
+                break;
+            case TACKY_INSTR_LABEL:
+                printf("  Label %s\n", ins->label);
+                break;
             case TACKY_INSTR_RETURN:
                 if (ins->ret_val.kind == TACKY_VAL_CONSTANT)
                     printf("  Return %d\n", ins->ret_val.constant);
@@ -201,16 +352,8 @@ void tacky_print_json(TackyProgram *p) {
             else { printf("{\"var\": \""); json_escape(stdout, ins->un_src.var_name); printf("\"}"); }
             printf(", \"dst\": \""); json_escape(stdout, ins->un_dst); printf("\"");
         } else if (ins->kind == TACKY_INSTR_BINARY) {
-            const char *op = "?";
-            switch (ins->bin_op) {
-                case TACKY_BIN_ADD: op = "Add"; break;
-                case TACKY_BIN_SUB: op = "Subtract"; break;
-                case TACKY_BIN_MUL: op = "Multiply"; break;
-                case TACKY_BIN_DIV: op = "Divide"; break;
-                case TACKY_BIN_REM: op = "Remainder"; break;
-            }
             printf("\"kind\": \"Binary\", ");
-            printf("\"op\": \"%s\", ", op);
+            printf("\"op\": \"%s\", ", binop_name(ins->bin_op));
             printf("\"src1\": ");
             if (ins->bin_src1.kind == TACKY_VAL_CONSTANT) printf("{\"const\": %d}", ins->bin_src1.constant);
             else { printf("{\"var\": \""); json_escape(stdout, ins->bin_src1.var_name); printf("\"}"); }
@@ -218,6 +361,34 @@ void tacky_print_json(TackyProgram *p) {
             if (ins->bin_src2.kind == TACKY_VAL_CONSTANT) printf("{\"const\": %d}", ins->bin_src2.constant);
             else { printf("{\"var\": \""); json_escape(stdout, ins->bin_src2.var_name); printf("\"}"); }
             printf(", \"dst\": \""); json_escape(stdout, ins->bin_dst); printf("\"");
+        } else if (ins->kind == TACKY_INSTR_COPY) {
+            printf("\"kind\": \"Copy\", ");
+            printf("\"src\": ");
+            if (ins->copy_src.kind == TACKY_VAL_CONSTANT) printf("{\"const\": %d}", ins->copy_src.constant);
+            else { printf("{\"var\": \""); json_escape(stdout, ins->copy_src.var_name); printf("\"}"); }
+            printf(", \"dst\": \""); json_escape(stdout, ins->copy_dst); printf("\"");
+        } else if (ins->kind == TACKY_INSTR_JUMP) {
+            printf("\"kind\": \"Jump\", \"target\": \"");
+            json_escape(stdout, ins->jump_target);
+            printf("\"");
+        } else if (ins->kind == TACKY_INSTR_JUMP_IF_ZERO) {
+            printf("\"kind\": \"JumpIfZero\", \"condition\": ");
+            if (ins->cond_val.kind == TACKY_VAL_CONSTANT) printf("{\"const\": %d}", ins->cond_val.constant);
+            else { printf("{\"var\": \""); json_escape(stdout, ins->cond_val.var_name); printf("\"}"); }
+            printf(", \"target\": \"");
+            json_escape(stdout, ins->jump_target);
+            printf("\"");
+        } else if (ins->kind == TACKY_INSTR_JUMP_IF_NOT_ZERO) {
+            printf("\"kind\": \"JumpIfNotZero\", \"condition\": ");
+            if (ins->cond_val.kind == TACKY_VAL_CONSTANT) printf("{\"const\": %d}", ins->cond_val.constant);
+            else { printf("{\"var\": \""); json_escape(stdout, ins->cond_val.var_name); printf("\"}"); }
+            printf(", \"target\": \"");
+            json_escape(stdout, ins->jump_target);
+            printf("\"");
+        } else if (ins->kind == TACKY_INSTR_LABEL) {
+            printf("\"kind\": \"Label\", \"name\": \"");
+            json_escape(stdout, ins->label);
+            printf("\"");
         } else if (ins->kind == TACKY_INSTR_RETURN) {
             printf("\"kind\": \"Return\", \"value\": ");
             if (ins->ret_val.kind == TACKY_VAL_CONSTANT) printf("{\"const\": %d}", ins->ret_val.constant);
@@ -234,10 +405,26 @@ void tacky_free(TackyProgram *p) {
         TackyInstr *ins = p->fn->body;
         while (ins) {
             TackyInstr *n = ins->next;
-            if (ins->kind == TACKY_INSTR_UNARY) {
-                free(ins->un_dst);
-            } else if (ins->kind == TACKY_INSTR_BINARY) {
-                free(ins->bin_dst);
+            switch (ins->kind) {
+                case TACKY_INSTR_UNARY:
+                    free(ins->un_dst);
+                    break;
+                case TACKY_INSTR_BINARY:
+                    free(ins->bin_dst);
+                    break;
+                case TACKY_INSTR_COPY:
+                    free(ins->copy_dst);
+                    break;
+                case TACKY_INSTR_JUMP:
+                case TACKY_INSTR_JUMP_IF_ZERO:
+                case TACKY_INSTR_JUMP_IF_NOT_ZERO:
+                    free(ins->jump_target);
+                    break;
+                case TACKY_INSTR_LABEL:
+                    free(ins->label);
+                    break;
+                case TACKY_INSTR_RETURN:
+                    break;
             }
             free(ins);
             ins = n;
