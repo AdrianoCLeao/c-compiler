@@ -24,12 +24,21 @@ const char *token_type_name(LexTokenType t) {
         case TOKEN_CLOSE_BRACE: return "TOKEN_CLOSE_BRACE";
         case TOKEN_SEMICOLON: return "TOKEN_SEMICOLON";
         case TOKEN_TILDE: return "TOKEN_TILDE";
+        case TOKEN_NOT: return "TOKEN_NOT";
         case TOKEN_NEGATION: return "TOKEN_NEGATION";
         case TOKEN_DECREMENT: return "TOKEN_DECREMENT";
         case TOKEN_PLUS: return "TOKEN_PLUS";
         case TOKEN_STAR: return "TOKEN_STAR";
         case TOKEN_SLASH: return "TOKEN_SLASH";
         case TOKEN_PERCENT: return "TOKEN_PERCENT";
+        case TOKEN_AMP_AMP: return "TOKEN_AMP_AMP";
+        case TOKEN_PIPE_PIPE: return "TOKEN_PIPE_PIPE";
+        case TOKEN_EQUAL_EQUAL: return "TOKEN_EQUAL_EQUAL";
+        case TOKEN_NOT_EQUAL: return "TOKEN_NOT_EQUAL";
+        case TOKEN_LESS: return "TOKEN_LESS";
+        case TOKEN_LESS_EQUAL: return "TOKEN_LESS_EQUAL";
+        case TOKEN_GREATER: return "TOKEN_GREATER";
+        case TOKEN_GREATER_EQUAL: return "TOKEN_GREATER_EQUAL";
         case TOKEN_EOF: return "TOKEN_EOF";
         default: return "TOKEN_UNKNOWN";
     }
