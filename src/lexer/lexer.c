@@ -98,6 +98,14 @@ Token lexer_next_token(Lexer *lexer) {
         case '}': return make_token(TOKEN_CLOSE_BRACE, "}", 1, lexer->position - 1);
         case ';': return make_token(TOKEN_SEMICOLON, ";", 1, lexer->position - 1);
         case '~': return make_token(TOKEN_TILDE, "~", 1, lexer->position - 1);
+        case '!': {
+            size_t start_pos = lexer->position - 1;
+            if (lexer->input[lexer->position] == '=') {
+                lexer->position++;
+                return make_token(TOKEN_NOT_EQUAL, lexer->input + start_pos, 2, start_pos);
+            }
+            return make_token(TOKEN_NOT, lexer->input + start_pos, 1, start_pos);
+        }
         case '+': return make_token(TOKEN_PLUS, "+", 1, lexer->position - 1);
         case '*': return make_token(TOKEN_STAR, "*", 1, lexer->position - 1);
         case '/': return make_token(TOKEN_SLASH, "/", 1, lexer->position - 1);
@@ -108,13 +116,56 @@ Token lexer_next_token(Lexer *lexer) {
                 return make_token(TOKEN_DECREMENT, "--", 2, lexer->position - 2);
             }
             return make_token(TOKEN_NEGATION, "-", 1, lexer->position - 1);
-        default: {
-            size_t pos = lexer->position - 1;
-            int line = 0, col = 0;
-            compute_line_col(lexer->input, pos, &line, &col);
-            fprintf(stderr, "Lexer Error at %d:%d: Invalid token '%c'\n", line, col, c);
-            exit(1);
+        case '&': {
+            size_t start_pos = lexer->position - 1;
+            if (lexer->input[lexer->position] == '&') {
+                lexer->position++;
+                return make_token(TOKEN_AMP_AMP, lexer->input + start_pos, 2, start_pos);
+            }
+            goto invalid_token;
         }
+        case '|': {
+            size_t start_pos = lexer->position - 1;
+            if (lexer->input[lexer->position] == '|') {
+                lexer->position++;
+                return make_token(TOKEN_PIPE_PIPE, lexer->input + start_pos, 2, start_pos);
+            }
+            goto invalid_token;
+        }
+        case '<': {
+            size_t start_pos = lexer->position - 1;
+            if (lexer->input[lexer->position] == '=') {
+                lexer->position++;
+                return make_token(TOKEN_LESS_EQUAL, lexer->input + start_pos, 2, start_pos);
+            }
+            return make_token(TOKEN_LESS, lexer->input + start_pos, 1, start_pos);
+        }
+        case '>': {
+            size_t start_pos = lexer->position - 1;
+            if (lexer->input[lexer->position] == '=') {
+                lexer->position++;
+                return make_token(TOKEN_GREATER_EQUAL, lexer->input + start_pos, 2, start_pos);
+            }
+            return make_token(TOKEN_GREATER, lexer->input + start_pos, 1, start_pos);
+        }
+        case '=': {
+            size_t start_pos = lexer->position - 1;
+            if (lexer->input[lexer->position] == '=') {
+                lexer->position++;
+                return make_token(TOKEN_EQUAL_EQUAL, lexer->input + start_pos, 2, start_pos);
+            }
+            goto invalid_token;
+        }
+        default:
+            goto invalid_token;
+    }
+
+invalid_token: {
+        size_t pos = lexer->position - 1;
+        int line = 0, col = 0;
+        compute_line_col(lexer->input, pos, &line, &col);
+        fprintf(stderr, "Lexer Error at %d:%d: Invalid token '%c'\n", line, col, c);
+        exit(1);
     }
 }
 
