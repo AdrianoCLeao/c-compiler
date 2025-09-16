@@ -28,8 +28,10 @@
 // On Mach-O platforms (macOS), C symbols in assembly are prefixed with '_'
 #if defined(__APPLE__)
 #define GLOBAL_PREFIX "_"
+#define LOCAL_LABEL_PREFIX "L"
 #else
 #define GLOBAL_PREFIX ""
+#define LOCAL_LABEL_PREFIX ".L"
 #endif
 
 static AssemblyInstruction *create_instruction(AssemblyInstructionType type, Operand src, Operand dst) {
@@ -37,8 +39,18 @@ static AssemblyInstruction *create_instruction(AssemblyInstructionType type, Ope
     instr->type = type;
     instr->src = src;
     instr->dst = dst;
+    instr->cond = ASM_COND_NONE;
+    instr->label = NULL;
     instr->next = NULL;
     return instr;
+}
+
+static char *xstrdup_local(const char *s) {
+    size_t n = strlen(s) + 1;
+    char *p = (char *)malloc(n);
+    if (!p) return NULL;
+    memcpy(p, s, n);
+    return p;
 }
 
 static void append_instr(AssemblyInstruction **head, AssemblyInstruction **tail, AssemblyInstruction *ins) {
@@ -68,6 +80,11 @@ static int collect_temp_vars(TackyFunction *fn, char ***out_names) {
                 if (count == cap) { cap *= 2; names = (char**)realloc(names, sizeof(char*) * cap); }
                 names[count++] = strdup(ins->bin_dst);
             }
+        } else if (ins->kind == TACKY_INSTR_COPY && ins->copy_dst) {
+            if (!is_name_in_list(names, count, ins->copy_dst)) {
+                if (count == cap) { cap *= 2; names = (char**)realloc(names, sizeof(char*) * cap); }
+                names[count++] = strdup(ins->copy_dst);
+            }
         }
     }
     *out_names = names;
@@ -90,112 +107,243 @@ static const char *reg32_name(int id) {
         case 1: return "ecx";
         case 2: return "edx";
         case 3: return "ebp";
+        case 4: return "r10d";
+        case 5: return "r11d";
         default: return "eax";
+    }
+}
+
+static const char *reg8_name(int id) {
+    switch (id) {
+        case 0: return "al";
+        case 1: return "cl";
+        case 2: return "dl";
+        case 4: return "r10b";
+        case 5: return "r11b";
+        default: return "al";
+    }
+}
+
+static void print_operand(FILE *out, Operand op, int byte_reg) {
+    switch (op.type) {
+        case OPERAND_IMMEDIATE:
+            fprintf(out, "$%d", op.value);
+            break;
+        case OPERAND_REGISTER:
+            fprintf(out, "%%%s", byte_reg ? reg8_name(op.value) : reg32_name(op.value));
+            break;
+        case OPERAND_MEM_RBP_OFFSET:
+            fprintf(out, "%d(%%rbp)", op.value);
+            break;
+    }
+}
+
+static Operand operand_from_val(TackyVal val, char **slot_names, int nslots) {
+    if (val.kind == TACKY_VAL_CONSTANT) {
+        Operand op = { .type = OPERAND_IMMEDIATE, .value = val.constant };
+        return op;
+    }
+    int off = slot_offset_for(slot_names, nslots, val.var_name);
+    Operand op = { .type = OPERAND_MEM_RBP_OFFSET, .value = off };
+    return op;
+}
+
+static void append_cmp_with_fixups(AssemblyInstruction **head, AssemblyInstruction **tail, Operand left, Operand right) {
+    // Ensure the second operand is not an immediate and avoid mem/mem combos.
+    if (right.type == OPERAND_IMMEDIATE) {
+        Operand reg = { .type = OPERAND_REGISTER, .value = 5 }; // r11d
+        append_instr(head, tail, create_instruction(ASM_MOV, right, reg));
+        right = reg;
+    }
+    if (right.type == OPERAND_MEM_RBP_OFFSET && left.type == OPERAND_MEM_RBP_OFFSET) {
+        Operand reg = { .type = OPERAND_REGISTER, .value = 4 }; // r10d
+        append_instr(head, tail, create_instruction(ASM_MOV, right, reg));
+        right = reg;
+    }
+
+    AssemblyInstruction *cmp = create_instruction(ASM_CMP, left, right);
+    append_instr(head, tail, cmp);
+}
+
+static void append_move_with_fixups(AssemblyInstruction **head, AssemblyInstruction **tail, Operand src, Operand dst) {
+    if (src.type == OPERAND_MEM_RBP_OFFSET && dst.type == OPERAND_MEM_RBP_OFFSET) {
+        Operand reg = { .type = OPERAND_REGISTER, .value = 5 }; // r11d scratch
+        append_instr(head, tail, create_instruction(ASM_MOV, src, reg));
+        append_instr(head, tail, create_instruction(ASM_MOV, reg, dst));
+        return;
+    }
+    append_instr(head, tail, create_instruction(ASM_MOV, src, dst));
+}
+
+static AssemblyCondCode cond_from_relop(TackyBinaryOp op) {
+    switch (op) {
+        case TACKY_BIN_EQUAL: return ASM_COND_E;
+        case TACKY_BIN_NOT_EQUAL: return ASM_COND_NE;
+        case TACKY_BIN_LESS: return ASM_COND_L;
+        case TACKY_BIN_LESS_EQUAL: return ASM_COND_LE;
+        case TACKY_BIN_GREATER: return ASM_COND_G;
+        case TACKY_BIN_GREATER_EQUAL: return ASM_COND_GE;
+        default: return ASM_COND_NONE;
+    }
+}
+
+static int is_relational_binop(TackyBinaryOp op) {
+    switch (op) {
+        case TACKY_BIN_EQUAL:
+        case TACKY_BIN_NOT_EQUAL:
+        case TACKY_BIN_LESS:
+        case TACKY_BIN_LESS_EQUAL:
+        case TACKY_BIN_GREATER:
+        case TACKY_BIN_GREATER_EQUAL:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+static const char *cond_suffix(AssemblyCondCode cond) {
+    switch (cond) {
+        case ASM_COND_E: return "e";
+        case ASM_COND_NE: return "ne";
+        case ASM_COND_L: return "l";
+        case ASM_COND_LE: return "le";
+        case ASM_COND_G: return "g";
+        case ASM_COND_GE: return "ge";
+        default: return "";
     }
 }
 
 static AssemblyInstruction *generate_instructions_from_tacky(TackyFunction *fn, char **slot_names, int nslots) {
     if (!fn) return NULL;
     AssemblyInstruction *head = NULL, *tail = NULL;
-    (void)nslots; // currently unused directly here
-    char *eax_var = NULL;
+
     for (TackyInstr *ins = fn->body; ins; ins = ins->next) {
         switch (ins->kind) {
             case TACKY_INSTR_UNARY: {
-                if (ins->un_src.kind == TACKY_VAL_CONSTANT) {
-                    Operand imm = { .type = OPERAND_IMMEDIATE, .value = ins->un_src.constant };
-                    Operand eax = { .type = OPERAND_REGISTER, .value = 0 };
-                    append_instr(&head, &tail, create_instruction(ASM_MOV, imm, eax));
+                if (ins->un_op == TACKY_UN_NOT) {
+                    Operand zero = { .type = OPERAND_IMMEDIATE, .value = 0 };
+                    Operand cond_op = operand_from_val(ins->un_src, slot_names, nslots);
+                    append_cmp_with_fixups(&head, &tail, zero, cond_op);
+                    if (ins->un_dst) {
+                        Operand dst = { .type = OPERAND_MEM_RBP_OFFSET, .value = slot_offset_for(slot_names, nslots, ins->un_dst) };
+                        append_move_with_fixups(&head, &tail, zero, dst);
+                        AssemblyInstruction *set = create_instruction(ASM_SETCC, (Operand){0}, dst);
+                        set->cond = ASM_COND_E;
+                        append_instr(&head, &tail, set);
+                    }
                 } else {
-                    // load from slot into %eax
-                    int off = slot_offset_for(slot_names, nslots, ins->un_src.var_name);
-                    Operand mem = { .type = OPERAND_MEM_RBP_OFFSET, .value = off };
                     Operand eax = { .type = OPERAND_REGISTER, .value = 0 };
-                    append_instr(&head, &tail, create_instruction(ASM_MOV, mem, eax));
+                    Operand dst = {0};
+                    if (ins->un_dst) {
+                        dst.type = OPERAND_MEM_RBP_OFFSET;
+                        dst.value = slot_offset_for(slot_names, nslots, ins->un_dst);
+                    }
+                    Operand src = operand_from_val(ins->un_src, slot_names, nslots);
+                    append_move_with_fixups(&head, &tail, src, eax);
+                    AssemblyInstructionType op = (ins->un_op == TACKY_UN_NEGATE) ? ASM_NEG : ASM_NOT;
+                    append_instr(&head, &tail, create_instruction(op, eax, (Operand){0}));
+                    if (ins->un_dst) {
+                        append_move_with_fixups(&head, &tail, eax, dst);
+                    }
                 }
-                AssemblyInstructionType op = (ins->un_op == TACKY_UN_NEGATE) ? ASM_NEG : ASM_NOT;
-                append_instr(&head, &tail, create_instruction(op, (Operand){ .type = OPERAND_REGISTER, .value = 0 }, (Operand){0}));
-                if (ins->un_dst) {
-                    int dst_off = slot_offset_for(slot_names, nslots, ins->un_dst);
-                    Operand eax = { .type = OPERAND_REGISTER, .value = 0 };
-                    Operand memdst = { .type = OPERAND_MEM_RBP_OFFSET, .value = dst_off };
-                    append_instr(&head, &tail, create_instruction(ASM_MOV, eax, memdst));
-                }
-                eax_var = ins->un_dst;
                 break;
             }
             case TACKY_INSTR_BINARY: {
-                // Load left into %eax, move to %ecx; load right into %eax; perform op
-                if (ins->bin_src1.kind == TACKY_VAL_CONSTANT) {
-                    Operand imm = { .type = OPERAND_IMMEDIATE, .value = ins->bin_src1.constant };
-                    Operand eax = { .type = OPERAND_REGISTER, .value = 0 };
-                    append_instr(&head, &tail, create_instruction(ASM_MOV, imm, eax));
+                if (is_relational_binop(ins->bin_op)) {
+                    Operand left = operand_from_val(ins->bin_src2, slot_names, nslots);
+                    Operand right = operand_from_val(ins->bin_src1, slot_names, nslots);
+                    append_cmp_with_fixups(&head, &tail, left, right);
+                    if (ins->bin_dst) {
+                        Operand dst = { .type = OPERAND_MEM_RBP_OFFSET, .value = slot_offset_for(slot_names, nslots, ins->bin_dst) };
+                        Operand zero = { .type = OPERAND_IMMEDIATE, .value = 0 };
+                        append_move_with_fixups(&head, &tail, zero, dst);
+                        AssemblyInstruction *set = create_instruction(ASM_SETCC, (Operand){0}, dst);
+                        set->cond = cond_from_relop(ins->bin_op);
+                        append_instr(&head, &tail, set);
+                    }
                 } else {
-                    int off = slot_offset_for(slot_names, nslots, ins->bin_src1.var_name);
-                    Operand mem = { .type = OPERAND_MEM_RBP_OFFSET, .value = off };
                     Operand eax = { .type = OPERAND_REGISTER, .value = 0 };
-                    append_instr(&head, &tail, create_instruction(ASM_MOV, mem, eax));
-                }
-                // movl %eax, %ecx
-                append_instr(&head, &tail, create_instruction(ASM_MOV, (Operand){ .type = OPERAND_REGISTER, .value = 0 }, (Operand){ .type = OPERAND_REGISTER, .value = 1 }));
+                    Operand ecx = { .type = OPERAND_REGISTER, .value = 1 };
+                    Operand src1 = operand_from_val(ins->bin_src1, slot_names, nslots);
+                    Operand src2 = operand_from_val(ins->bin_src2, slot_names, nslots);
+                    append_move_with_fixups(&head, &tail, src1, eax);
+                    append_move_with_fixups(&head, &tail, eax, ecx);
+                    append_move_with_fixups(&head, &tail, src2, eax);
 
-                // Load right into %eax
-                if (ins->bin_src2.kind == TACKY_VAL_CONSTANT) {
-                    Operand imm = { .type = OPERAND_IMMEDIATE, .value = ins->bin_src2.constant };
-                    Operand eax = { .type = OPERAND_REGISTER, .value = 0 };
-                    append_instr(&head, &tail, create_instruction(ASM_MOV, imm, eax));
-                } else {
-                    int off = slot_offset_for(slot_names, nslots, ins->bin_src2.var_name);
-                    Operand mem = { .type = OPERAND_MEM_RBP_OFFSET, .value = off };
-                    Operand eax = { .type = OPERAND_REGISTER, .value = 0 };
-                    append_instr(&head, &tail, create_instruction(ASM_MOV, mem, eax));
-                }
+                    switch (ins->bin_op) {
+                        case TACKY_BIN_ADD:
+                            append_instr(&head, &tail, create_instruction(ASM_ADD_ECX_EAX, (Operand){0}, (Operand){0}));
+                            break;
+                        case TACKY_BIN_SUB:
+                            append_instr(&head, &tail, create_instruction(ASM_SUB_EAX_ECX, (Operand){0}, (Operand){0}));
+                            break;
+                        case TACKY_BIN_MUL:
+                            append_instr(&head, &tail, create_instruction(ASM_IMUL_ECX_EAX, (Operand){0}, (Operand){0}));
+                            break;
+                        case TACKY_BIN_DIV:
+                            append_instr(&head, &tail, create_instruction(ASM_XCHG_EAX_ECX, (Operand){0}, (Operand){0}));
+                            append_instr(&head, &tail, create_instruction(ASM_CLTD, (Operand){0}, (Operand){0}));
+                            append_instr(&head, &tail, create_instruction(ASM_IDIV_ECX, (Operand){0}, (Operand){0}));
+                            break;
+                        case TACKY_BIN_REM:
+                            append_instr(&head, &tail, create_instruction(ASM_XCHG_EAX_ECX, (Operand){0}, (Operand){0}));
+                            append_instr(&head, &tail, create_instruction(ASM_CLTD, (Operand){0}, (Operand){0}));
+                            append_instr(&head, &tail, create_instruction(ASM_IDIV_ECX, (Operand){0}, (Operand){0}));
+                            append_instr(&head, &tail, create_instruction(ASM_MOV_EDX_EAX, (Operand){0}, (Operand){0}));
+                            break;
+                        default:
+                            break;
+                    }
 
-                switch (ins->bin_op) {
-                    case TACKY_BIN_ADD:
-                        append_instr(&head, &tail, create_instruction(ASM_ADD_ECX_EAX, (Operand){0}, (Operand){0}));
-                        break;
-                    case TACKY_BIN_SUB:
-                        append_instr(&head, &tail, create_instruction(ASM_SUB_EAX_ECX, (Operand){0}, (Operand){0}));
-                        break;
-                    case TACKY_BIN_MUL:
-                        append_instr(&head, &tail, create_instruction(ASM_IMUL_ECX_EAX, (Operand){0}, (Operand){0}));
-                        break;
-                    case TACKY_BIN_DIV:
-                        // %eax = right, %ecx = left; swap so %eax = left, then cltd; idiv %ecx; quotient in %eax
-                        append_instr(&head, &tail, create_instruction(ASM_XCHG_EAX_ECX, (Operand){0}, (Operand){0}));
-                        append_instr(&head, &tail, create_instruction(ASM_CLTD, (Operand){0}, (Operand){0}));
-                        append_instr(&head, &tail, create_instruction(ASM_IDIV_ECX, (Operand){0}, (Operand){0}));
-                        break;
-                    case TACKY_BIN_REM:
-                        append_instr(&head, &tail, create_instruction(ASM_XCHG_EAX_ECX, (Operand){0}, (Operand){0}));
-                        append_instr(&head, &tail, create_instruction(ASM_CLTD, (Operand){0}, (Operand){0}));
-                        append_instr(&head, &tail, create_instruction(ASM_IDIV_ECX, (Operand){0}, (Operand){0}));
-                        append_instr(&head, &tail, create_instruction(ASM_MOV_EDX_EAX, (Operand){0}, (Operand){0}));
-                        break;
-                }
-
-                if (ins->bin_dst) {
-                    int dst_off = slot_offset_for(slot_names, nslots, ins->bin_dst);
-                    Operand eax = { .type = OPERAND_REGISTER, .value = 0 };
-                    Operand memdst = { .type = OPERAND_MEM_RBP_OFFSET, .value = dst_off };
-                    append_instr(&head, &tail, create_instruction(ASM_MOV, eax, memdst));
-                    eax_var = ins->bin_dst;
+                    if (ins->bin_dst) {
+                        Operand dst = { .type = OPERAND_MEM_RBP_OFFSET, .value = slot_offset_for(slot_names, nslots, ins->bin_dst) };
+                        append_move_with_fixups(&head, &tail, eax, dst);
+                    }
                 }
                 break;
             }
+            case TACKY_INSTR_COPY: {
+                Operand src = operand_from_val(ins->copy_src, slot_names, nslots);
+                Operand dst = { .type = OPERAND_MEM_RBP_OFFSET, .value = slot_offset_for(slot_names, nslots, ins->copy_dst) };
+                append_move_with_fixups(&head, &tail, src, dst);
+                break;
+            }
+            case TACKY_INSTR_JUMP: {
+                AssemblyInstruction *jmp = create_instruction(ASM_JMP, (Operand){0}, (Operand){0});
+                jmp->label = xstrdup_local(ins->jump_target);
+                append_instr(&head, &tail, jmp);
+                break;
+            }
+            case TACKY_INSTR_JUMP_IF_ZERO: {
+                Operand zero = { .type = OPERAND_IMMEDIATE, .value = 0 };
+                Operand cond = operand_from_val(ins->cond_val, slot_names, nslots);
+                append_cmp_with_fixups(&head, &tail, zero, cond);
+                AssemblyInstruction *jcc = create_instruction(ASM_JCC, (Operand){0}, (Operand){0});
+                jcc->cond = ASM_COND_E;
+                jcc->label = xstrdup_local(ins->jump_target);
+                append_instr(&head, &tail, jcc);
+                break;
+            }
+            case TACKY_INSTR_JUMP_IF_NOT_ZERO: {
+                Operand zero = { .type = OPERAND_IMMEDIATE, .value = 0 };
+                Operand cond = operand_from_val(ins->cond_val, slot_names, nslots);
+                append_cmp_with_fixups(&head, &tail, zero, cond);
+                AssemblyInstruction *jcc = create_instruction(ASM_JCC, (Operand){0}, (Operand){0});
+                jcc->cond = ASM_COND_NE;
+                jcc->label = xstrdup_local(ins->jump_target);
+                append_instr(&head, &tail, jcc);
+                break;
+            }
+            case TACKY_INSTR_LABEL: {
+                AssemblyInstruction *lab = create_instruction(ASM_LABEL, (Operand){0}, (Operand){0});
+                lab->label = xstrdup_local(ins->label);
+                append_instr(&head, &tail, lab);
+                break;
+            }
             case TACKY_INSTR_RETURN: {
-                if (ins->ret_val.kind == TACKY_VAL_CONSTANT) {
-                    Operand imm = { .type = OPERAND_IMMEDIATE, .value = ins->ret_val.constant };
-                    Operand eax = { .type = OPERAND_REGISTER, .value = 0 };
-                    append_instr(&head, &tail, create_instruction(ASM_MOV, imm, eax));
-                } else {
-                    // load from slot into %eax
-                    int off = slot_offset_for(slot_names, nslots, ins->ret_val.var_name);
-                    Operand mem = { .type = OPERAND_MEM_RBP_OFFSET, .value = off };
-                    Operand eax = { .type = OPERAND_REGISTER, .value = 0 };
-                    append_instr(&head, &tail, create_instruction(ASM_MOV, mem, eax));
-                }
+                Operand eax = { .type = OPERAND_REGISTER, .value = 0 };
+                Operand src = operand_from_val(ins->ret_val, slot_names, nslots);
+                append_move_with_fixups(&head, &tail, src, eax);
                 append_instr(&head, &tail, create_instruction(ASM_RET, (Operand){0}, (Operand){0}));
                 break;
             }
@@ -298,6 +446,7 @@ void free_assembly(AssemblyProgram *program) {
     AssemblyInstruction *instr = program->function->instructions;
     while (instr) {
         AssemblyInstruction *next = instr->next;
+        free(instr->label);
         free(instr);
         instr = next;
     }
@@ -322,15 +471,11 @@ void write_assembly_to_stream(AssemblyProgram *program, FILE *out) {
     while (instr) {
         switch (instr->type) {
             case ASM_MOV:
-                if (instr->src.type == OPERAND_IMMEDIATE && instr->dst.type == OPERAND_REGISTER) {
-                    fprintf(out, "  movl $%d, %%%s\n", instr->src.value, reg32_name(instr->dst.value));
-                } else if (instr->src.type == OPERAND_REGISTER && instr->dst.type == OPERAND_REGISTER) {
-                    fprintf(out, "  movl %%%s, %%%s\n", reg32_name(instr->src.value), reg32_name(instr->dst.value));
-                } else if (instr->src.type == OPERAND_MEM_RBP_OFFSET && instr->dst.type == OPERAND_REGISTER) {
-                    fprintf(out, "  movl %d(%%rbp), %%%s\n", instr->src.value, reg32_name(instr->dst.value));
-                } else if (instr->src.type == OPERAND_REGISTER && instr->dst.type == OPERAND_MEM_RBP_OFFSET) {
-                    fprintf(out, "  movl %%%s, %d(%%rbp)\n", reg32_name(instr->src.value), instr->dst.value);
-                }
+                fprintf(out, "  movl ");
+                print_operand(out, instr->src, 0);
+                fprintf(out, ", ");
+                print_operand(out, instr->dst, 0);
+                fprintf(out, "\n");
                 break;
             case ASM_NEG:
                 fprintf(out, "  negl %%eax\n");
@@ -358,6 +503,27 @@ void write_assembly_to_stream(AssemblyProgram *program, FILE *out) {
                 break;
             case ASM_MOV_EDX_EAX:
                 fprintf(out, "  movl %%edx, %%eax\n");
+                break;
+            case ASM_CMP:
+                fprintf(out, "  cmpl ");
+                print_operand(out, instr->src, 0);
+                fprintf(out, ", ");
+                print_operand(out, instr->dst, 0);
+                fprintf(out, "\n");
+                break;
+            case ASM_SETCC:
+                fprintf(out, "  set%s ", cond_suffix(instr->cond));
+                print_operand(out, instr->dst, 1);
+                fprintf(out, "\n");
+                break;
+            case ASM_JMP:
+                fprintf(out, "  jmp %s%s\n", LOCAL_LABEL_PREFIX, instr->label);
+                break;
+            case ASM_JCC:
+                fprintf(out, "  j%s %s%s\n", cond_suffix(instr->cond), LOCAL_LABEL_PREFIX, instr->label);
+                break;
+            case ASM_LABEL:
+                fprintf(out, "%s%s:\n", LOCAL_LABEL_PREFIX, instr->label);
                 break;
             case ASM_RET:
                 fprintf(out, "  leave\n");

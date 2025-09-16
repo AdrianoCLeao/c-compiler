@@ -16,7 +16,22 @@ typedef enum {
     ASM_MOV_EDX_EAX,
     ASM_XCHG_EAX_ECX,
     ASM_CLTD,
+    ASM_CMP,
+    ASM_SETCC,
+    ASM_JMP,
+    ASM_JCC,
+    ASM_LABEL,
 } AssemblyInstructionType;
+
+typedef enum {
+    ASM_COND_E,
+    ASM_COND_NE,
+    ASM_COND_L,
+    ASM_COND_LE,
+    ASM_COND_G,
+    ASM_COND_GE,
+    ASM_COND_NONE
+} AssemblyCondCode;
 
 typedef enum {
     OPERAND_IMMEDIATE,
@@ -33,6 +48,8 @@ typedef struct AssemblyInstruction {
     AssemblyInstructionType type;
     Operand src;
     Operand dst;
+    AssemblyCondCode cond;
+    char *label;
     struct AssemblyInstruction *next;
 } AssemblyInstruction;
 
