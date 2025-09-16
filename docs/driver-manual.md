@@ -84,7 +84,7 @@ The `out/` folder is created automatically if needed.
   - `./bin/main.exe -S --quiet examples/neg.c`
 
 - Full pipeline and run the program, printing its exit code:
-  - `./bin/main.exe --run examples/chapter_3/valid1.c`
+  - `./bin/main.exe --run examples/chapter_4/valid1.c`
 
 Tip: In any shell, you can manually check a program's exit code using `echo $?` right after running it, e.g., `./a.out; echo $?`.
 

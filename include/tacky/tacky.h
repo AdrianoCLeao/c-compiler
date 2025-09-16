@@ -16,7 +16,8 @@ typedef struct {
 
 typedef enum {
     TACKY_UN_NEGATE,
-    TACKY_UN_COMPLEMENT
+    TACKY_UN_COMPLEMENT,
+    TACKY_UN_NOT
 } TackyUnaryOp;
 
 typedef enum {
@@ -24,13 +25,24 @@ typedef enum {
     TACKY_BIN_SUB,
     TACKY_BIN_MUL,
     TACKY_BIN_DIV,
-    TACKY_BIN_REM
+    TACKY_BIN_REM,
+    TACKY_BIN_EQUAL,
+    TACKY_BIN_NOT_EQUAL,
+    TACKY_BIN_LESS,
+    TACKY_BIN_LESS_EQUAL,
+    TACKY_BIN_GREATER,
+    TACKY_BIN_GREATER_EQUAL
 } TackyBinaryOp;
 
 typedef enum {
     TACKY_INSTR_RETURN,
     TACKY_INSTR_UNARY,
-    TACKY_INSTR_BINARY
+    TACKY_INSTR_BINARY,
+    TACKY_INSTR_COPY,
+    TACKY_INSTR_JUMP,
+    TACKY_INSTR_JUMP_IF_ZERO,
+    TACKY_INSTR_JUMP_IF_NOT_ZERO,
+    TACKY_INSTR_LABEL
 } TackyInstrKind;
 
 typedef struct TackyInstr {
@@ -44,6 +56,14 @@ typedef struct TackyInstr {
     TackyVal bin_src1;
     TackyVal bin_src2;
     char *bin_dst; // destination variable name for binary
+
+    TackyVal copy_src;
+    char *copy_dst;
+
+    char *jump_target;
+    TackyVal cond_val;
+
+    char *label;
 
     struct TackyInstr *next;
 } TackyInstr;
