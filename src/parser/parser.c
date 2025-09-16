@@ -77,10 +77,22 @@ static int precedence(LexTokenType t) {
         case TOKEN_STAR:
         case TOKEN_SLASH:
         case TOKEN_PERCENT:
-            return 20;
+            return 50;
         case TOKEN_PLUS:
         case TOKEN_NEGATION: // binary minus
+            return 45;
+        case TOKEN_LESS:
+        case TOKEN_LESS_EQUAL:
+        case TOKEN_GREATER:
+        case TOKEN_GREATER_EQUAL:
+            return 35;
+        case TOKEN_EQUAL_EQUAL:
+        case TOKEN_NOT_EQUAL:
+            return 30;
+        case TOKEN_AMP_AMP:
             return 10;
+        case TOKEN_PIPE_PIPE:
+            return 5;
         default:
             return -1;
     }
@@ -93,7 +105,15 @@ static ASTNodeType binop_node_type(LexTokenType t) {
         case TOKEN_STAR: return AST_EXPRESSION_MULTIPLY;
         case TOKEN_SLASH: return AST_EXPRESSION_DIVIDE;
         case TOKEN_PERCENT: return AST_EXPRESSION_REMAINDER;
-        default: return AST_EXPRESSION_ADD; // unreachable for non-binops
+        case TOKEN_EQUAL_EQUAL: return AST_EXPRESSION_EQUAL;
+        case TOKEN_NOT_EQUAL: return AST_EXPRESSION_NOT_EQUAL;
+        case TOKEN_LESS: return AST_EXPRESSION_LESS_THAN;
+        case TOKEN_LESS_EQUAL: return AST_EXPRESSION_LESS_EQUAL;
+        case TOKEN_GREATER: return AST_EXPRESSION_GREATER_THAN;
+        case TOKEN_GREATER_EQUAL: return AST_EXPRESSION_GREATER_EQUAL;
+        case TOKEN_AMP_AMP: return AST_EXPRESSION_LOGICAL_AND;
+        case TOKEN_PIPE_PIPE: return AST_EXPRESSION_LOGICAL_OR;
+        default: return AST_EXPRESSION_ADD; // unreachable
     }
 }
 
@@ -122,16 +142,19 @@ static ASTNode *parse_factor(Parser *parser) {
         ASTNode *constant = create_ast_node(AST_EXPRESSION_CONSTANT, parser->current_token.value, NULL, NULL);
         consume(parser, TOKEN_CONSTANT);
         return constant;
-    } else if (parser->current_token.type == TOKEN_NEGATION || parser->current_token.type == TOKEN_TILDE) {
+    } else if (parser->current_token.type == TOKEN_NEGATION ||
+               parser->current_token.type == TOKEN_TILDE ||
+               parser->current_token.type == TOKEN_NOT) {
         LexTokenType op = parser->current_token.type;
         consume(parser, op);
         ASTNode *inner_expr = parse_factor(parser);
-        return create_ast_node(
-            (op == TOKEN_NEGATION) ? AST_EXPRESSION_NEGATE : AST_EXPRESSION_COMPLEMENT,
-            NULL,
-            inner_expr,
-            NULL
-        );
+        ASTNodeType node_type = AST_EXPRESSION_NEGATE;
+        if (op == TOKEN_TILDE) {
+            node_type = AST_EXPRESSION_COMPLEMENT;
+        } else if (op == TOKEN_NOT) {
+            node_type = AST_EXPRESSION_NOT;
+        }
+        return create_ast_node(node_type, NULL, inner_expr, NULL);
     } else if (parser->current_token.type == TOKEN_OPEN_PAREN) {
         consume(parser, TOKEN_OPEN_PAREN);
         ASTNode *inner_expr = parse_binary_expr(parser, 0);
@@ -189,6 +212,9 @@ void print_ast(ASTNode *node, int depth) {
         case AST_EXPRESSION_COMPLEMENT:
             printf("Complement\n");
             break;
+        case AST_EXPRESSION_NOT:
+            printf("Not\n");
+            break;
         case AST_EXPRESSION_ADD:
             printf("Add\n");
             break;
@@ -203,6 +229,30 @@ void print_ast(ASTNode *node, int depth) {
             break;
         case AST_EXPRESSION_REMAINDER:
             printf("Remainder\n");
+            break;
+        case AST_EXPRESSION_EQUAL:
+            printf("Equal\n");
+            break;
+        case AST_EXPRESSION_NOT_EQUAL:
+            printf("NotEqual\n");
+            break;
+        case AST_EXPRESSION_LESS_THAN:
+            printf("LessThan\n");
+            break;
+        case AST_EXPRESSION_LESS_EQUAL:
+            printf("LessOrEqual\n");
+            break;
+        case AST_EXPRESSION_GREATER_THAN:
+            printf("GreaterThan\n");
+            break;
+        case AST_EXPRESSION_GREATER_EQUAL:
+            printf("GreaterOrEqual\n");
+            break;
+        case AST_EXPRESSION_LOGICAL_AND:
+            printf("LogicalAnd\n");
+            break;
+        case AST_EXPRESSION_LOGICAL_OR:
+            printf("LogicalOr\n");
             break;
         default:
             printf("Unknown Node\n");
