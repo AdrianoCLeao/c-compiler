@@ -15,7 +15,7 @@ The compiled binary is at `bin/main.exe` (invoked as `./bin/main.exe` on Unix-li
 ## Usage
 
 ```
-./bin/main.exe [--lex | --parse | --tacky | --codegen] [-S] \
+./bin/main.exe [--lex | --parse | --validate | --tacky | --codegen] [-S] \
   [--dump-tokens[=<path>]] \
   [--dump-ast[=txt|dot|json] [--dump-ast-path=<path>]] \
   [--dump-tacky[=txt|json] [--dump-tacky-path=<path>]] \
@@ -26,6 +26,7 @@ The compiled binary is at `bin/main.exe` (invoked as `./bin/main.exe` on Unix-li
 
 - `--lex`: Run lexer only (no files written).
 - `--parse`: Run lexer + parser (no files written).
+- `--validate`: Run lexer + parser + semantic validation (no files written).
 - `--tacky`: Run up to TACKY IR generation (no files written).
 - `--codegen`: Run up to assembly IR generation (no emission).
 
