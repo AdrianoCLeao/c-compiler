@@ -88,9 +88,14 @@ static const char *ast_type_name(ASTNodeType t) {
     switch (t) {
         case AST_PROGRAM: return "Program";
         case AST_FUNCTION: return "Function";
+        case AST_BLOCK_ITEM: return "BlockItem";
+        case AST_DECLARATION: return "Declaration";
         case AST_STATEMENT_RETURN: return "Return";
+        case AST_STATEMENT_EXPRESSION: return "ExpressionStmt";
+        case AST_STATEMENT_NULL: return "NullStmt";
         case AST_EXPRESSION_CONSTANT: return "Constant";
-        case AST_EXPRESSION_IDENTIFIER: return "Identifier";
+        case AST_EXPRESSION_VARIABLE: return "Variable";
+        case AST_EXPRESSION_ASSIGNMENT: return "Assign";
         case AST_EXPRESSION_NEGATE: return "Negate";
         case AST_EXPRESSION_COMPLEMENT: return "Complement";
         case AST_EXPRESSION_NOT: return "Not";
