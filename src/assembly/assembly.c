@@ -66,25 +66,54 @@ static int is_name_in_list(char **names, int count, const char *name) {
     return 0;
 }
 
+static void ensure_slot_name(char ***names, int *count, int *cap, const char *name) {
+    if (!name) return;
+    if (is_name_in_list(*names, *count, name)) return;
+    if (*count == *cap) {
+        *cap = (*cap == 0) ? 8 : (*cap * 2);
+        char **resized = (char **)realloc(*names, sizeof(char *) * (*cap));
+        if (!resized) {
+            fprintf(stderr, "Out of memory while collecting temporaries\n");
+            exit(1);
+        }
+        *names = resized;
+    }
+    (*names)[(*count)++] = strdup(name);
+}
+
+static void collect_from_val(TackyVal val, char ***names, int *count, int *cap) {
+    if (val.kind == TACKY_VAL_VAR && val.var_name) {
+        ensure_slot_name(names, count, cap, val.var_name);
+    }
+}
+
 static int collect_temp_vars(TackyFunction *fn, char ***out_names) {
-    int cap = 16, count = 0;
-    char **names = (char **)malloc(sizeof(char*) * cap);
+    int cap = 0, count = 0;
+    char **names = NULL;
     for (TackyInstr *ins = fn->body; ins; ins = ins->next) {
-        if (ins->kind == TACKY_INSTR_UNARY && ins->un_dst) {
-            if (!is_name_in_list(names, count, ins->un_dst)) {
-                if (count == cap) { cap *= 2; names = (char**)realloc(names, sizeof(char*) * cap); }
-                names[count++] = strdup(ins->un_dst);
-            }
-        } else if (ins->kind == TACKY_INSTR_BINARY && ins->bin_dst) {
-            if (!is_name_in_list(names, count, ins->bin_dst)) {
-                if (count == cap) { cap *= 2; names = (char**)realloc(names, sizeof(char*) * cap); }
-                names[count++] = strdup(ins->bin_dst);
-            }
-        } else if (ins->kind == TACKY_INSTR_COPY && ins->copy_dst) {
-            if (!is_name_in_list(names, count, ins->copy_dst)) {
-                if (count == cap) { cap *= 2; names = (char**)realloc(names, sizeof(char*) * cap); }
-                names[count++] = strdup(ins->copy_dst);
-            }
+        switch (ins->kind) {
+            case TACKY_INSTR_UNARY:
+                collect_from_val(ins->un_src, &names, &count, &cap);
+                ensure_slot_name(&names, &count, &cap, ins->un_dst);
+                break;
+            case TACKY_INSTR_BINARY:
+                collect_from_val(ins->bin_src1, &names, &count, &cap);
+                collect_from_val(ins->bin_src2, &names, &count, &cap);
+                ensure_slot_name(&names, &count, &cap, ins->bin_dst);
+                break;
+            case TACKY_INSTR_COPY:
+                collect_from_val(ins->copy_src, &names, &count, &cap);
+                ensure_slot_name(&names, &count, &cap, ins->copy_dst);
+                break;
+            case TACKY_INSTR_JUMP_IF_ZERO:
+            case TACKY_INSTR_JUMP_IF_NOT_ZERO:
+                collect_from_val(ins->cond_val, &names, &count, &cap);
+                break;
+            case TACKY_INSTR_RETURN:
+                collect_from_val(ins->ret_val, &names, &count, &cap);
+                break;
+            default:
+                break;
         }
     }
     *out_names = names;
