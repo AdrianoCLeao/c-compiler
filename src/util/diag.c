@@ -27,6 +27,7 @@ const char *token_type_name(LexTokenType t) {
         case TOKEN_NOT: return "TOKEN_NOT";
         case TOKEN_NEGATION: return "TOKEN_NEGATION";
         case TOKEN_DECREMENT: return "TOKEN_DECREMENT";
+        case TOKEN_ASSIGN: return "TOKEN_ASSIGN";
         case TOKEN_PLUS: return "TOKEN_PLUS";
         case TOKEN_STAR: return "TOKEN_STAR";
         case TOKEN_SLASH: return "TOKEN_SLASH";

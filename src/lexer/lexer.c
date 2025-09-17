@@ -154,7 +154,7 @@ Token lexer_next_token(Lexer *lexer) {
                 lexer->position++;
                 return make_token(TOKEN_EQUAL_EQUAL, lexer->input + start_pos, 2, start_pos);
             }
-            goto invalid_token;
+            return make_token(TOKEN_ASSIGN, lexer->input + start_pos, 1, start_pos);
         }
         default:
             goto invalid_token;
