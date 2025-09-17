@@ -8,6 +8,7 @@ typedef enum {
     DRIVER_STAGE_FULL = 0,   // Run full pipeline
     DRIVER_STAGE_LEX,        // Stop after lexing
     DRIVER_STAGE_PARSE,      // Stop after parsing
+    DRIVER_STAGE_VALIDATE,   // Stop after semantic validation
     DRIVER_STAGE_TACKY,      // Stop after TACKY generation
     DRIVER_STAGE_CODEGEN     // Stop after code generation (no emission)
 } DriverStage;

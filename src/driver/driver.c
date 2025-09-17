@@ -9,10 +9,11 @@ static int has_prefix(const char *s, const char *p) {
 
 void driver_print_usage(const char *prog) {
     fprintf(stderr,
-            "Usage: %s [--lex | --parse | --tacky | --codegen] [-S] [--dump-tokens[=<path>]] [--dump-ast[=txt|dot|json] [--dump-ast-path=<path>]] [--dump-tacky[=txt|json] [--dump-tacky-path=<path>]] [--quiet] [--help|-h] <source.c>\n\n"
+            "Usage: %s [--lex | --parse | --validate | --tacky | --codegen] [-S] [--dump-tokens[=<path>]] [--dump-ast[=txt|dot|json] [--dump-ast-path=<path>]] [--dump-tacky[=txt|json] [--dump-tacky-path=<path>]] [--quiet] [--help|-h] <source.c>\n\n"
             "Stages (choose at most one):\n"
             "  --lex                   Run lexer only (no files written)\n"
             "  --parse                 Run lexer+parser (no files written)\n"
+            "  --validate              Run semantic validation (no files written)\n"
             "  --tacky                 Run up to TACKY generation (no files written)\n"
             "  --codegen               Run up to assembly IR generation (no emission)\n\n"
             "Emission:\n"
@@ -88,6 +89,13 @@ DriverOptions driver_parse_args(int argc, char **argv) {
                 exit(1);
             }
             opts.stage = DRIVER_STAGE_PARSE;
+        } else if (strcmp(arg, "--validate") == 0) {
+            if (opts.stage != DRIVER_STAGE_FULL) {
+                fprintf(stderr, "Error: Multiple stage flags provided.\n");
+                driver_print_usage(argv[0]);
+                exit(1);
+            }
+            opts.stage = DRIVER_STAGE_VALIDATE;
         } else if (strcmp(arg, "--codegen") == 0) {
             if (opts.stage != DRIVER_STAGE_FULL) {
                 fprintf(stderr, "Error: Multiple stage flags provided.\n");
