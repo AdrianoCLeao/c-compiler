@@ -1,14 +1,20 @@
 #ifndef PARSER_H
 #define PARSER_H
 
+#include <stdbool.h>
 #include "../lexer/lexer.h"
 
 typedef enum {
     AST_PROGRAM,
     AST_FUNCTION,
+    AST_BLOCK_ITEM,
+    AST_DECLARATION,
     AST_STATEMENT_RETURN,
+    AST_STATEMENT_EXPRESSION,
+    AST_STATEMENT_NULL,
     AST_EXPRESSION_CONSTANT,
-    AST_EXPRESSION_IDENTIFIER,
+    AST_EXPRESSION_VARIABLE,
+    AST_EXPRESSION_ASSIGNMENT,
     AST_EXPRESSION_NEGATE,
     AST_EXPRESSION_COMPLEMENT,
     AST_EXPRESSION_NOT,
@@ -32,6 +38,7 @@ typedef struct ASTNode {
     struct ASTNode *left;
     struct ASTNode *right;
     char *value;
+    bool owns_value;
 } ASTNode;
 
 typedef struct {
@@ -41,9 +48,6 @@ typedef struct {
 
 void parser_init(Parser *parser, Lexer *lexer);
 ASTNode *parse_program(Parser *parser);
-ASTNode *parse_function(Parser *parser);
-ASTNode *parse_statement(Parser *parser);
-ASTNode *parse_expression(Parser *parser);
 void free_ast(ASTNode *node);
 void print_ast(ASTNode *node, int depth);
 

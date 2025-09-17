@@ -4,10 +4,11 @@
 #include <string.h>
 #include "../../include/util/diag.h"
 
-static ASTNode *create_ast_node(ASTNodeType type, char *value, ASTNode *left, ASTNode *right) {
+static ASTNode *create_ast_node(ASTNodeType type, const char *value, ASTNode *left, ASTNode *right) {
     ASTNode *node = (ASTNode *)malloc(sizeof(ASTNode));
     node->type = type;
     node->value = value ? strdup(value) : NULL;
+    node->owns_value = value != NULL;
     node->left = left;
     node->right = right;
     return node;
@@ -34,12 +35,29 @@ void parser_init(Parser *parser, Lexer *lexer) {
     parser->current_token = lexer_next_token(lexer);
 }
 
+static ASTNode *parse_function(Parser *parser);
+static ASTNode *parse_expression(Parser *parser);
+static ASTNode *parse_block_item(Parser *parser);
+static ASTNode *parse_declaration(Parser *parser);
+static ASTNode *parse_statement(Parser *parser);
+
 ASTNode *parse_program(Parser *parser) {
     return create_ast_node(AST_PROGRAM, NULL, parse_function(parser), NULL);
 }
 
+static void append_block_item(ASTNode **head, ASTNode **tail, ASTNode *item) {
+    if (!item) return;
+    if (!*head) {
+        *head = *tail = item;
+    } else {
+        (*tail)->right = item;
+        *tail = item;
+    }
+}
+
 ASTNode *parse_function(Parser *parser) {
-    consume(parser, TOKEN_KEYWORD_INT); 
+    consume(parser, TOKEN_KEYWORD_INT);
+
     if (parser->current_token.type != TOKEN_IDENTIFIER) {
         int line = 0, col = 0;
         compute_line_col(parser->lexer->input, parser->current_token.start, &line, &col);
@@ -49,27 +67,79 @@ ASTNode *parse_function(Parser *parser) {
                 parser->current_token.value ? parser->current_token.value : "");
         exit(1);
     }
-
-    ASTNode *func_name = create_ast_node(AST_EXPRESSION_IDENTIFIER, parser->current_token.value, NULL, NULL);
+    char *func_name_copy = strdup(parser->current_token.value);
     consume(parser, TOKEN_IDENTIFIER);
 
     consume(parser, TOKEN_OPEN_PAREN);
-    consume(parser, TOKEN_KEYWORD_VOID); 
-    consume(parser, TOKEN_CLOSE_PAREN);  
-    consume(parser, TOKEN_OPEN_BRACE);  
+    consume(parser, TOKEN_KEYWORD_VOID);
+    consume(parser, TOKEN_CLOSE_PAREN);
+    consume(parser, TOKEN_OPEN_BRACE);
 
-    ASTNode *body = parse_statement(parser);
-
+    ASTNode *block_head = NULL;
+    ASTNode *block_tail = NULL;
+    while (parser->current_token.type != TOKEN_CLOSE_BRACE) {
+        ASTNode *item = parse_block_item(parser);
+        append_block_item(&block_head, &block_tail, item);
+    }
     consume(parser, TOKEN_CLOSE_BRACE);
 
-    return create_ast_node(AST_FUNCTION, "main", func_name, body);
+    ASTNode *function = create_ast_node(AST_FUNCTION, func_name_copy, block_head, NULL);
+    free(func_name_copy);
+    return function;
 }
 
-ASTNode *parse_statement(Parser *parser) {
-    consume(parser, TOKEN_KEYWORD_RETURN); 
+static ASTNode *parse_block_item(Parser *parser) {
+    if (parser->current_token.type == TOKEN_KEYWORD_INT) {
+        ASTNode *decl = parse_declaration(parser);
+        return create_ast_node(AST_BLOCK_ITEM, NULL, decl, NULL);
+    }
+    ASTNode *stmt = parse_statement(parser);
+    return create_ast_node(AST_BLOCK_ITEM, NULL, stmt, NULL);
+}
+
+static ASTNode *parse_declaration(Parser *parser) {
+    consume(parser, TOKEN_KEYWORD_INT);
+
+    if (parser->current_token.type != TOKEN_IDENTIFIER) {
+        int line = 0, col = 0;
+        compute_line_col(parser->lexer->input, parser->current_token.start, &line, &col);
+        fprintf(stderr, "Syntax Error at %d:%d: Expected identifier in declaration, got %s ('%s')\n",
+                line, col,
+                token_type_name(parser->current_token.type),
+                parser->current_token.value ? parser->current_token.value : "");
+        exit(1);
+    }
+    char *name_copy = strdup(parser->current_token.value);
+    consume(parser, TOKEN_IDENTIFIER);
+
+    ASTNode *init = NULL;
+    if (parser->current_token.type == TOKEN_ASSIGN) {
+        consume(parser, TOKEN_ASSIGN);
+        init = parse_expression(parser);
+    }
+    consume(parser, TOKEN_SEMICOLON);
+
+    ASTNode *decl = create_ast_node(AST_DECLARATION, name_copy, init, NULL);
+    free(name_copy);
+    return decl;
+}
+
+static ASTNode *parse_statement(Parser *parser) {
+    if (parser->current_token.type == TOKEN_KEYWORD_RETURN) {
+        consume(parser, TOKEN_KEYWORD_RETURN);
+        ASTNode *expr = parse_expression(parser);
+        consume(parser, TOKEN_SEMICOLON);
+        return create_ast_node(AST_STATEMENT_RETURN, NULL, expr, NULL);
+    }
+
+    if (parser->current_token.type == TOKEN_SEMICOLON) {
+        consume(parser, TOKEN_SEMICOLON);
+        return create_ast_node(AST_STATEMENT_NULL, NULL, NULL, NULL);
+    }
+
     ASTNode *expr = parse_expression(parser);
-    consume(parser, TOKEN_SEMICOLON); 
-    return create_ast_node(AST_STATEMENT_RETURN, NULL, expr, NULL);
+    consume(parser, TOKEN_SEMICOLON);
+    return create_ast_node(AST_STATEMENT_EXPRESSION, NULL, expr, NULL);
 }
 
 static int precedence(LexTokenType t) {
@@ -79,7 +149,7 @@ static int precedence(LexTokenType t) {
         case TOKEN_PERCENT:
             return 50;
         case TOKEN_PLUS:
-        case TOKEN_NEGATION: // binary minus
+        case TOKEN_NEGATION:
             return 45;
         case TOKEN_LESS:
         case TOKEN_LESS_EQUAL:
@@ -93,6 +163,8 @@ static int precedence(LexTokenType t) {
             return 10;
         case TOKEN_PIPE_PIPE:
             return 5;
+        case TOKEN_ASSIGN:
+            return 1;
         default:
             return -1;
     }
@@ -113,11 +185,12 @@ static ASTNodeType binop_node_type(LexTokenType t) {
         case TOKEN_GREATER_EQUAL: return AST_EXPRESSION_GREATER_EQUAL;
         case TOKEN_AMP_AMP: return AST_EXPRESSION_LOGICAL_AND;
         case TOKEN_PIPE_PIPE: return AST_EXPRESSION_LOGICAL_OR;
-        default: return AST_EXPRESSION_ADD; // unreachable
+        default: return AST_EXPRESSION_ADD;
     }
 }
 
 static ASTNode *parse_factor(Parser *parser);
+
 static ASTNode *parse_binary_expr(Parser *parser, int min_prec) {
     ASTNode *left = parse_factor(parser);
 
@@ -126,11 +199,15 @@ static ASTNode *parse_binary_expr(Parser *parser, int min_prec) {
         int prec = precedence(op_tok);
         if (prec < min_prec) break;
 
+        if (op_tok == TOKEN_ASSIGN) {
+            consume(parser, TOKEN_ASSIGN);
+            ASTNode *right = parse_binary_expr(parser, prec);
+            left = create_ast_node(AST_EXPRESSION_ASSIGNMENT, NULL, left, right);
+            continue;
+        }
+
         consume(parser, op_tok);
-
-        int next_min_prec = prec + 1;
-        ASTNode *right = parse_binary_expr(parser, next_min_prec);
-
+        ASTNode *right = parse_binary_expr(parser, prec + 1);
         left = create_ast_node(binop_node_type(op_tok), NULL, left, right);
     }
 
@@ -142,9 +219,17 @@ static ASTNode *parse_factor(Parser *parser) {
         ASTNode *constant = create_ast_node(AST_EXPRESSION_CONSTANT, parser->current_token.value, NULL, NULL);
         consume(parser, TOKEN_CONSTANT);
         return constant;
-    } else if (parser->current_token.type == TOKEN_NEGATION ||
-               parser->current_token.type == TOKEN_TILDE ||
-               parser->current_token.type == TOKEN_NOT) {
+    }
+
+    if (parser->current_token.type == TOKEN_IDENTIFIER) {
+        ASTNode *var = create_ast_node(AST_EXPRESSION_VARIABLE, parser->current_token.value, NULL, NULL);
+        consume(parser, TOKEN_IDENTIFIER);
+        return var;
+    }
+
+    if (parser->current_token.type == TOKEN_NEGATION ||
+        parser->current_token.type == TOKEN_TILDE ||
+        parser->current_token.type == TOKEN_NOT) {
         LexTokenType op = parser->current_token.type;
         consume(parser, op);
         ASTNode *inner_expr = parse_factor(parser);
@@ -155,41 +240,48 @@ static ASTNode *parse_factor(Parser *parser) {
             node_type = AST_EXPRESSION_NOT;
         }
         return create_ast_node(node_type, NULL, inner_expr, NULL);
-    } else if (parser->current_token.type == TOKEN_OPEN_PAREN) {
+    }
+
+    if (parser->current_token.type == TOKEN_OPEN_PAREN) {
         consume(parser, TOKEN_OPEN_PAREN);
-        ASTNode *inner_expr = parse_binary_expr(parser, 0);
+        ASTNode *inner_expr = parse_binary_expr(parser, 1);
         consume(parser, TOKEN_CLOSE_PAREN);
         return inner_expr;
-    } else {
-        int line = 0, col = 0;
-        compute_line_col(parser->lexer->input, parser->current_token.start, &line, &col);
-        fprintf(stderr, "Syntax Error at %d:%d: Expected an expression, got %s ('%s')\n",
-                line, col,
-                token_type_name(parser->current_token.type),
-                parser->current_token.value ? parser->current_token.value : "");
-        exit(1);
     }
+
+    int line = 0, col = 0;
+    compute_line_col(parser->lexer->input, parser->current_token.start, &line, &col);
+    fprintf(stderr, "Syntax Error at %d:%d: Expected an expression, got %s ('%s')\n",
+            line, col,
+            token_type_name(parser->current_token.type),
+            parser->current_token.value ? parser->current_token.value : "");
+    exit(1);
 }
 
 ASTNode *parse_expression(Parser *parser) {
-    return parse_binary_expr(parser, 0);
+    return parse_binary_expr(parser, 1);
 }
 
 void free_ast(ASTNode *node) {
     if (!node) return;
-    free(node->value);
     free_ast(node->left);
     free_ast(node->right);
+    if (node->value && node->owns_value) {
+        free(node->value);
+    }
     free(node);
+}
+
+static void print_indent(int depth) {
+    for (int i = 0; i < depth; i++) {
+        printf("  ");
+    }
 }
 
 void print_ast(ASTNode *node, int depth) {
     if (!node) return;
 
-    for (int i = 0; i < depth; i++) {
-        printf("  ");
-    }
-
+    print_indent(depth);
     switch (node->type) {
         case AST_PROGRAM:
             printf("Program\n");
@@ -197,14 +289,29 @@ void print_ast(ASTNode *node, int depth) {
         case AST_FUNCTION:
             printf("Function: %s\n", node->value);
             break;
+        case AST_BLOCK_ITEM:
+            printf("BlockItem\n");
+            break;
+        case AST_DECLARATION:
+            printf("Declaration: %s\n", node->value);
+            break;
         case AST_STATEMENT_RETURN:
             printf("Return\n");
+            break;
+        case AST_STATEMENT_EXPRESSION:
+            printf("ExpressionStmt\n");
+            break;
+        case AST_STATEMENT_NULL:
+            printf("NullStmt\n");
             break;
         case AST_EXPRESSION_CONSTANT:
             printf("Constant: %s\n", node->value);
             break;
-        case AST_EXPRESSION_IDENTIFIER:
-            printf("Identifier: %s\n", node->value);
+        case AST_EXPRESSION_VARIABLE:
+            printf("Variable: %s\n", node->value);
+            break;
+        case AST_EXPRESSION_ASSIGNMENT:
+            printf("Assign\n");
             break;
         case AST_EXPRESSION_NEGATE:
             printf("Negate\n");
@@ -256,6 +363,7 @@ void print_ast(ASTNode *node, int depth) {
             break;
         default:
             printf("Unknown Node\n");
+            break;
     }
 
     print_ast(node->left, depth + 1);
