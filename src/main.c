@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include "../include/lexer/lexer.h"
 #include "../include/parser/parser.h"
+#include "../include/semantic/semantic.h"
 #include "../include/assembly/assembly.h"
 #include "../include/assembly/code_emission.h"
 #include "../include/driver/driver.h"
@@ -102,6 +103,35 @@ int main(int argc, char *argv[]) {
     }
 
     ASTNode *ast = parse_program(&parser);
+
+    if (opts.stage == DRIVER_STAGE_VALIDATE ||
+        opts.stage == DRIVER_STAGE_TACKY ||
+        opts.stage == DRIVER_STAGE_CODEGEN ||
+        opts.stage == DRIVER_STAGE_FULL) {
+        resolve_variables(ast);
+    }
+
+    if (opts.stage == DRIVER_STAGE_VALIDATE) {
+        if (opts.dump_tokens) {
+            if (!dump_tokens_file(opts.input_path, source_code, opts.dump_tokens_path)) {
+                fprintf(stderr, "Error: Failed to dump tokens.\n");
+                free_ast(ast);
+                free(source_code);
+                return 1;
+            }
+        }
+        if (opts.dump_ast_format != DUMP_AST_NONE) {
+            if (!dump_ast_file(ast, opts.input_path, opts.dump_ast_format, opts.dump_ast_path)) {
+                fprintf(stderr, "Error: Failed to dump AST.\n");
+                free_ast(ast);
+                free(source_code);
+                return 1;
+            }
+        }
+        free_ast(ast);
+        free(source_code);
+        return 0;
+    }
 
     if (opts.stage == DRIVER_STAGE_TACKY) {
         TackyProgram *tacky = tacky_from_ast(ast);
