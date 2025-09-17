@@ -1,6 +1,7 @@
 #ifndef TACKY_H
 #define TACKY_H
 
+#include <stdbool.h>
 #include "../parser/parser.h"
 
 typedef enum {
@@ -12,6 +13,7 @@ typedef struct {
     TackyValKind kind;
     int constant;      // valid if kind == TACKY_VAL_CONSTANT
     char *var_name;    // valid if kind == TACKY_VAL_VAR
+    bool owns_name;
 } TackyVal;
 
 typedef enum {

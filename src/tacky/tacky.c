@@ -41,10 +41,22 @@ static void emit_instr(TackyGenCtx *ctx, TackyInstr *ins) {
 }
 
 static TackyVal tv_const(int v) {
-    TackyVal t; t.kind = TACKY_VAL_CONSTANT; t.constant = v; t.var_name = NULL; return t;
+    TackyVal t; t.kind = TACKY_VAL_CONSTANT; t.constant = v; t.var_name = NULL; t.owns_name = false; return t;
 }
-static TackyVal tv_var(const char *name) {
-    TackyVal t; t.kind = TACKY_VAL_VAR; t.constant = 0; t.var_name = (char *)name; return t;
+static TackyVal tv_var(const char *name, bool take_ownership) {
+    TackyVal t; t.kind = TACKY_VAL_VAR; t.constant = 0;
+    if (take_ownership) {
+        t.var_name = xstrdup_local(name);
+        if (!t.var_name) {
+            fprintf(stderr, "Out of memory while duplicating variable name\n");
+            exit(1);
+        }
+        t.owns_name = true;
+    } else {
+        t.var_name = (char *)name;
+        t.owns_name = false;
+    }
+    return t;
 }
 
 static TackyUnaryOp convert_unop(ASTNodeType t) {
@@ -79,6 +91,21 @@ static TackyVal gen_exp(ASTNode *e, TackyGenCtx *ctx) {
             int v = atoi(e->value);
             return tv_const(v);
         }
+        case AST_EXPRESSION_VARIABLE:
+            return tv_var(e->value, true);
+        case AST_EXPRESSION_ASSIGNMENT: {
+            if (!e->left || e->left->type != AST_EXPRESSION_VARIABLE) {
+                return tv_const(0);
+            }
+            const char *name = e->left->value;
+            TackyVal rhs = gen_exp(e->right, ctx);
+            TackyInstr *copy = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            copy->kind = TACKY_INSTR_COPY;
+            copy->copy_src = rhs;
+            copy->copy_dst = xstrdup_local(name);
+            emit_instr(ctx, copy);
+            return tv_var(name, true);
+        }
         case AST_EXPRESSION_NEGATE:
         case AST_EXPRESSION_COMPLEMENT:
         case AST_EXPRESSION_NOT: {
@@ -90,7 +117,7 @@ static TackyVal gen_exp(ASTNode *e, TackyGenCtx *ctx) {
             ins->un_src = src;
             ins->un_dst = dst;
             emit_instr(ctx, ins);
-            return tv_var(dst);
+            return tv_var(dst, false);
         }
         case AST_EXPRESSION_ADD:
         case AST_EXPRESSION_SUBTRACT:
@@ -113,7 +140,7 @@ static TackyVal gen_exp(ASTNode *e, TackyGenCtx *ctx) {
             ins->bin_src2 = v2;
             ins->bin_dst = dst;
             emit_instr(ctx, ins);
-            return tv_var(dst);
+            return tv_var(dst, false);
         }
         case AST_EXPRESSION_LOGICAL_AND: {
             TackyVal left = gen_exp(e->left, ctx);
@@ -161,7 +188,7 @@ static TackyVal gen_exp(ASTNode *e, TackyGenCtx *ctx) {
             label_end->label = end_label;
             emit_instr(ctx, label_end);
 
-            return tv_var(result);
+            return tv_var(result, false);
         }
         case AST_EXPRESSION_LOGICAL_OR: {
             TackyVal left = gen_exp(e->left, ctx);
@@ -209,10 +236,59 @@ static TackyVal gen_exp(ASTNode *e, TackyGenCtx *ctx) {
             label_end->label = end_label;
             emit_instr(ctx, label_end);
 
-            return tv_var(result);
+            return tv_var(result, false);
         }
         default:
             return tv_const(0);
+    }
+}
+
+static void gen_statement(ASTNode *stmt, TackyGenCtx *ctx) {
+    if (!stmt) return;
+    switch (stmt->type) {
+        case AST_STATEMENT_RETURN: {
+            TackyInstr *retins = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            retins->kind = TACKY_INSTR_RETURN;
+            retins->ret_val = stmt->left ? gen_exp(stmt->left, ctx) : tv_const(0);
+            emit_instr(ctx, retins);
+            break;
+        }
+        case AST_STATEMENT_EXPRESSION: {
+            TackyVal tmp = gen_exp(stmt->left, ctx);
+            if (tmp.kind == TACKY_VAL_VAR && tmp.owns_name && tmp.var_name) {
+                free(tmp.var_name);
+            }
+            break;
+        }
+        case AST_STATEMENT_NULL:
+            break;
+        default:
+            break;
+    }
+}
+
+static void gen_declaration(ASTNode *decl, TackyGenCtx *ctx) {
+    if (!decl || decl->type != AST_DECLARATION) return;
+    if (!decl->left) return; // no initializer
+
+    TackyVal init = gen_exp(decl->left, ctx);
+    TackyInstr *copy = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+    copy->kind = TACKY_INSTR_COPY;
+    copy->copy_src = init;
+    copy->copy_dst = xstrdup_local(decl->value);
+    emit_instr(ctx, copy);
+}
+
+static void gen_block_items(ASTNode *item, TackyGenCtx *ctx) {
+    for (ASTNode *curr = item; curr; curr = curr->right) {
+        if (!curr || curr->type != AST_BLOCK_ITEM) continue;
+        ASTNode *content = curr->left;
+        if (!content) continue;
+        if (content->type == AST_DECLARATION) {
+            gen_declaration(content, ctx);
+        } else {
+            gen_statement(content, ctx);
+        }
     }
 }
 
@@ -222,15 +298,11 @@ TackyProgram *tacky_from_ast(ASTNode *ast) {
     if (!fn || fn->type != AST_FUNCTION) return NULL;
 
     TackyGenCtx ctx = {0};
-    ASTNode *stmt = fn->right;
-    TackyVal retv = tv_const(0);
-    if (stmt && stmt->type == AST_STATEMENT_RETURN) {
-        retv = gen_exp(stmt->left, &ctx);
-    }
+    gen_block_items(fn->left, &ctx);
 
     TackyInstr *retins = (TackyInstr *)calloc(1, sizeof(TackyInstr));
     retins->kind = TACKY_INSTR_RETURN;
-    retins->ret_val = retv;
+    retins->ret_val = tv_const(0);
     emit_instr(&ctx, retins);
 
     TackyProgram *p = (TackyProgram *)malloc(sizeof(TackyProgram));
@@ -263,6 +335,12 @@ static const char *binop_name(TackyBinaryOp op) {
         case TACKY_BIN_GREATER: return "GreaterThan";
         case TACKY_BIN_GREATER_EQUAL: return "GreaterOrEqual";
         default: return "?";
+    }
+}
+
+static void free_tacky_val(TackyVal v) {
+    if (v.kind == TACKY_VAL_VAR && v.owns_name && v.var_name) {
+        free(v.var_name);
     }
 }
 
@@ -407,23 +485,33 @@ void tacky_free(TackyProgram *p) {
             TackyInstr *n = ins->next;
             switch (ins->kind) {
                 case TACKY_INSTR_UNARY:
+                    free_tacky_val(ins->un_src);
                     free(ins->un_dst);
                     break;
                 case TACKY_INSTR_BINARY:
+                    free_tacky_val(ins->bin_src1);
+                    free_tacky_val(ins->bin_src2);
                     free(ins->bin_dst);
                     break;
                 case TACKY_INSTR_COPY:
+                    free_tacky_val(ins->copy_src);
                     free(ins->copy_dst);
                     break;
                 case TACKY_INSTR_JUMP:
+                    free(ins->jump_target);
+                    break;
                 case TACKY_INSTR_JUMP_IF_ZERO:
                 case TACKY_INSTR_JUMP_IF_NOT_ZERO:
+                    if (ins->kind != TACKY_INSTR_JUMP) {
+                        free_tacky_val(ins->cond_val);
+                    }
                     free(ins->jump_target);
                     break;
                 case TACKY_INSTR_LABEL:
                     free(ins->label);
                     break;
                 case TACKY_INSTR_RETURN:
+                    free_tacky_val(ins->ret_val);
                     break;
             }
             free(ins);
