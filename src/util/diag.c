@@ -18,11 +18,15 @@ const char *token_type_name(LexTokenType t) {
         case TOKEN_KEYWORD_INT: return "TOKEN_KEYWORD_INT";
         case TOKEN_KEYWORD_VOID: return "TOKEN_KEYWORD_VOID";
         case TOKEN_KEYWORD_RETURN: return "TOKEN_KEYWORD_RETURN";
+        case TOKEN_KEYWORD_IF: return "TOKEN_KEYWORD_IF";
+        case TOKEN_KEYWORD_ELSE: return "TOKEN_KEYWORD_ELSE";
         case TOKEN_OPEN_PAREN: return "TOKEN_OPEN_PAREN";
         case TOKEN_CLOSE_PAREN: return "TOKEN_CLOSE_PAREN";
         case TOKEN_OPEN_BRACE: return "TOKEN_OPEN_BRACE";
         case TOKEN_CLOSE_BRACE: return "TOKEN_CLOSE_BRACE";
         case TOKEN_SEMICOLON: return "TOKEN_SEMICOLON";
+        case TOKEN_QUESTION: return "TOKEN_QUESTION";
+        case TOKEN_COLON: return "TOKEN_COLON";
         case TOKEN_TILDE: return "TOKEN_TILDE";
         case TOKEN_NOT: return "TOKEN_NOT";
         case TOKEN_NEGATION: return "TOKEN_NEGATION";
