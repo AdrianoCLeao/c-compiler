@@ -126,6 +126,11 @@ static void resolve_statement(ASTNode *stmt, VarMap *map) {
             break;
         case AST_STATEMENT_NULL:
             break;
+        case AST_STATEMENT_IF:
+            resolve_expression(stmt->left, map);
+            resolve_statement(stmt->right, map);
+            resolve_statement(stmt->third, map);
+            break;
         default:
             SEMANTIC_ERROR("Semantic Error: unexpected node type in statement");
     }
@@ -189,6 +194,11 @@ static void resolve_expression(ASTNode *expr, VarMap *map) {
         case AST_EXPRESSION_LOGICAL_OR:
             resolve_expression(expr->left, map);
             resolve_expression(expr->right, map);
+            break;
+        case AST_EXPRESSION_CONDITIONAL:
+            resolve_expression(expr->left, map);
+            resolve_expression(expr->right, map);
+            resolve_expression(expr->third, map);
             break;
         case AST_EXPRESSION_CONSTANT:
             break;
