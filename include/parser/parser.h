@@ -12,9 +12,11 @@ typedef enum {
     AST_STATEMENT_RETURN,
     AST_STATEMENT_EXPRESSION,
     AST_STATEMENT_NULL,
+    AST_STATEMENT_IF,
     AST_EXPRESSION_CONSTANT,
     AST_EXPRESSION_VARIABLE,
     AST_EXPRESSION_ASSIGNMENT,
+    AST_EXPRESSION_CONDITIONAL,
     AST_EXPRESSION_NEGATE,
     AST_EXPRESSION_COMPLEMENT,
     AST_EXPRESSION_NOT,
@@ -37,6 +39,7 @@ typedef struct ASTNode {
     ASTNodeType type;
     struct ASTNode *left;
     struct ASTNode *right;
+    struct ASTNode *third;
     char *value;
     bool owns_value;
 } ASTNode;

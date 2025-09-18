@@ -11,6 +11,7 @@ static ASTNode *create_ast_node(ASTNodeType type, const char *value, ASTNode *le
     node->owns_value = value != NULL;
     node->left = left;
     node->right = right;
+    node->third = NULL;
     return node;
 }
 
@@ -37,6 +38,7 @@ void parser_init(Parser *parser, Lexer *lexer) {
 
 static ASTNode *parse_function(Parser *parser);
 static ASTNode *parse_expression(Parser *parser);
+static ASTNode *parse_conditional(Parser *parser);
 static ASTNode *parse_block_item(Parser *parser);
 static ASTNode *parse_declaration(Parser *parser);
 static ASTNode *parse_statement(Parser *parser);
@@ -130,6 +132,22 @@ static ASTNode *parse_statement(Parser *parser) {
         ASTNode *expr = parse_expression(parser);
         consume(parser, TOKEN_SEMICOLON);
         return create_ast_node(AST_STATEMENT_RETURN, NULL, expr, NULL);
+    }
+
+    if (parser->current_token.type == TOKEN_KEYWORD_IF) {
+        consume(parser, TOKEN_KEYWORD_IF);
+        consume(parser, TOKEN_OPEN_PAREN);
+        ASTNode *condition = parse_expression(parser);
+        consume(parser, TOKEN_CLOSE_PAREN);
+        ASTNode *then_stmt = parse_statement(parser);
+        ASTNode *else_stmt = NULL;
+        if (parser->current_token.type == TOKEN_KEYWORD_ELSE) {
+            consume(parser, TOKEN_KEYWORD_ELSE);
+            else_stmt = parse_statement(parser);
+        }
+        ASTNode *if_node = create_ast_node(AST_STATEMENT_IF, NULL, condition, then_stmt);
+        if_node->third = else_stmt;
+        return if_node;
     }
 
     if (parser->current_token.type == TOKEN_SEMICOLON) {
@@ -259,13 +277,28 @@ static ASTNode *parse_factor(Parser *parser) {
 }
 
 ASTNode *parse_expression(Parser *parser) {
-    return parse_binary_expr(parser, 1);
+    return parse_conditional(parser);
+}
+
+static ASTNode *parse_conditional(Parser *parser) {
+    ASTNode *condition = parse_binary_expr(parser, 1);
+    if (parser->current_token.type == TOKEN_QUESTION) {
+        consume(parser, TOKEN_QUESTION);
+        ASTNode *if_true = parse_expression(parser);
+        consume(parser, TOKEN_COLON);
+        ASTNode *if_false = parse_expression(parser);
+        ASTNode *cond = create_ast_node(AST_EXPRESSION_CONDITIONAL, NULL, condition, if_true);
+        cond->third = if_false;
+        return cond;
+    }
+    return condition;
 }
 
 void free_ast(ASTNode *node) {
     if (!node) return;
     free_ast(node->left);
     free_ast(node->right);
+    free_ast(node->third);
     if (node->value && node->owns_value) {
         free(node->value);
     }
@@ -304,6 +337,9 @@ void print_ast(ASTNode *node, int depth) {
         case AST_STATEMENT_NULL:
             printf("NullStmt\n");
             break;
+        case AST_STATEMENT_IF:
+            printf("If\n");
+            break;
         case AST_EXPRESSION_CONSTANT:
             printf("Constant: %s\n", node->value);
             break;
@@ -312,6 +348,9 @@ void print_ast(ASTNode *node, int depth) {
             break;
         case AST_EXPRESSION_ASSIGNMENT:
             printf("Assign\n");
+            break;
+        case AST_EXPRESSION_CONDITIONAL:
+            printf("Conditional\n");
             break;
         case AST_EXPRESSION_NEGATE:
             printf("Negate\n");
@@ -368,4 +407,5 @@ void print_ast(ASTNode *node, int depth) {
 
     print_ast(node->left, depth + 1);
     print_ast(node->right, depth + 1);
+    print_ast(node->third, depth + 1);
 }
