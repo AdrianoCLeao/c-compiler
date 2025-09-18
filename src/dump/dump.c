@@ -93,9 +93,11 @@ static const char *ast_type_name(ASTNodeType t) {
         case AST_STATEMENT_RETURN: return "Return";
         case AST_STATEMENT_EXPRESSION: return "ExpressionStmt";
         case AST_STATEMENT_NULL: return "NullStmt";
+        case AST_STATEMENT_IF: return "If";
         case AST_EXPRESSION_CONSTANT: return "Constant";
         case AST_EXPRESSION_VARIABLE: return "Variable";
         case AST_EXPRESSION_ASSIGNMENT: return "Assign";
+        case AST_EXPRESSION_CONDITIONAL: return "Conditional";
         case AST_EXPRESSION_NEGATE: return "Negate";
         case AST_EXPRESSION_COMPLEMENT: return "Complement";
         case AST_EXPRESSION_NOT: return "Not";
@@ -124,6 +126,7 @@ static void dump_ast_txt_rec(FILE *f, ASTNode *n, int depth) {
     fputc('\n', f);
     dump_ast_txt_rec(f, n->left, depth + 1);
     dump_ast_txt_rec(f, n->right, depth + 1);
+    dump_ast_txt_rec(f, n->third, depth + 1);
 }
 
 static void dump_ast_dot_rec(FILE *f, ASTNode *n, int *counter) {
@@ -134,9 +137,10 @@ static void dump_ast_dot_rec(FILE *f, ASTNode *n, int *counter) {
         fprintf(f, "  n%d [label=\"%s\\n%s\"];\n", id, ast_type_name(n->type), n->value);
     else
         fprintf(f, "  n%d [label=\"%s\"];\n", id, ast_type_name(n->type));
-    int left_id = -1, right_id = -1;
+    int left_id = -1, right_id = -1, third_id = -1;
     if (n->left) { left_id = *counter; dump_ast_dot_rec(f, n->left, counter); fprintf(f, "  n%d -> n%d;\n", id, left_id); }
     if (n->right) { right_id = *counter; dump_ast_dot_rec(f, n->right, counter); fprintf(f, "  n%d -> n%d;\n", id, right_id); }
+    if (n->third) { third_id = *counter; dump_ast_dot_rec(f, n->third, counter); fprintf(f, "  n%d -> n%d;\n", id, third_id); }
 }
 
 static void json_escape(FILE *f, const char *s) {
@@ -164,6 +168,10 @@ static void dump_ast_json_rec(FILE *f, ASTNode *n) {
     }
     fputs(",\n  \"left\": ", f); dump_ast_json_rec(f, n->left);
     fputs(",\n  \"right\": ", f); dump_ast_json_rec(f, n->right);
+    if (n->third) {
+        fputs(",\n  \"third\": ", f);
+        dump_ast_json_rec(f, n->third);
+    }
     fputs("\n}", f);
 }
 

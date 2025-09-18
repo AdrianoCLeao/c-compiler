@@ -238,6 +238,52 @@ static TackyVal gen_exp(ASTNode *e, TackyGenCtx *ctx) {
 
             return tv_var(result, false);
         }
+        case AST_EXPRESSION_CONDITIONAL: {
+            TackyVal cond = gen_exp(e->left, ctx);
+            char *else_label = make_label(ctx, "cond_else");
+            char *end_label = make_label(ctx, "cond_end");
+            char *result = make_temp(ctx);
+
+            TackyInstr *jump = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            jump->kind = TACKY_INSTR_JUMP_IF_ZERO;
+            jump->cond_val = cond;
+            jump->jump_target = xstrdup_local(else_label);
+            emit_instr(ctx, jump);
+
+            TackyVal then_val = gen_exp(e->right, ctx);
+            TackyInstr *copy_then = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            copy_then->kind = TACKY_INSTR_COPY;
+            copy_then->copy_src = then_val;
+            copy_then->copy_dst = xstrdup_local(result);
+            emit_instr(ctx, copy_then);
+
+            TackyInstr *jump_end = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            jump_end->kind = TACKY_INSTR_JUMP;
+            jump_end->jump_target = xstrdup_local(end_label);
+            emit_instr(ctx, jump_end);
+
+            TackyInstr *label_else = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            label_else->kind = TACKY_INSTR_LABEL;
+            label_else->label = xstrdup_local(else_label);
+            emit_instr(ctx, label_else);
+
+            TackyVal else_val = gen_exp(e->third, ctx);
+            TackyInstr *copy_else = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            copy_else->kind = TACKY_INSTR_COPY;
+            copy_else->copy_src = else_val;
+            copy_else->copy_dst = xstrdup_local(result);
+            emit_instr(ctx, copy_else);
+
+            TackyInstr *label_end = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            label_end->kind = TACKY_INSTR_LABEL;
+            label_end->label = xstrdup_local(end_label);
+            emit_instr(ctx, label_end);
+
+            free(else_label);
+            free(end_label);
+
+            return tv_var(result, false);
+        }
         default:
             return tv_const(0);
     }
@@ -262,6 +308,46 @@ static void gen_statement(ASTNode *stmt, TackyGenCtx *ctx) {
         }
         case AST_STATEMENT_NULL:
             break;
+        case AST_STATEMENT_IF: {
+            TackyVal cond = gen_exp(stmt->left, ctx);
+            char *else_label = NULL;
+            char *end_label = make_label(ctx, "if_end");
+
+            if (stmt->third) {
+                else_label = make_label(ctx, "if_else");
+            }
+
+            TackyInstr *jump_zero = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            jump_zero->kind = TACKY_INSTR_JUMP_IF_ZERO;
+            jump_zero->cond_val = cond;
+            jump_zero->jump_target = xstrdup_local(stmt->third ? else_label : end_label);
+            emit_instr(ctx, jump_zero);
+
+            gen_statement(stmt->right, ctx);
+
+            if (stmt->third) {
+                TackyInstr *jump_end = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+                jump_end->kind = TACKY_INSTR_JUMP;
+                jump_end->jump_target = xstrdup_local(end_label);
+                emit_instr(ctx, jump_end);
+
+                TackyInstr *label_else = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+                label_else->kind = TACKY_INSTR_LABEL;
+                label_else->label = xstrdup_local(else_label);
+                emit_instr(ctx, label_else);
+
+                gen_statement(stmt->third, ctx);
+            }
+
+            TackyInstr *label_end = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            label_end->kind = TACKY_INSTR_LABEL;
+            label_end->label = xstrdup_local(end_label);
+            emit_instr(ctx, label_end);
+
+            if (else_label) free(else_label);
+            free(end_label);
+            break;
+        }
         default:
             break;
     }
