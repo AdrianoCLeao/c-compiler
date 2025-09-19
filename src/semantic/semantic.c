@@ -10,51 +10,97 @@
         exit(1);                        \
     } while (0)
 
-typedef struct {
+typedef struct VarScope {
     char **names;
     char **resolved;
     size_t count;
     size_t capacity;
+    struct VarScope *parent;
+} VarScope;
+
+typedef struct {
+    VarScope *current;
     int next_unique;
-} VarMap;
+    int loop_depth;
+} ResolveContext;
 
-static void var_map_init(VarMap *map) {
-    map->names = NULL;
-    map->resolved = NULL;
-    map->count = 0;
-    map->capacity = 0;
-    map->next_unique = 0;
-}
-
-static void var_map_free(VarMap *map) {
-    if (!map) return;
-    for (size_t i = 0; i < map->count; i++) {
-        free(map->names[i]);
-        // Do not free map->resolved[i]; the AST owns these strings.
+static VarScope *scope_create(VarScope *parent) {
+    VarScope *scope = (VarScope *)calloc(1, sizeof(VarScope));
+    if (!scope) {
+        SEMANTIC_ERROR("Out of memory while creating scope");
     }
-    free(map->names);
-    free(map->resolved);
+    scope->parent = parent;
+    return scope;
 }
 
-static void var_map_ensure_capacity(VarMap *map) {
-    if (map->count < map->capacity) return;
-    size_t new_cap = map->capacity ? map->capacity * 2 : 8;
-    char **new_names = (char **)realloc(map->names, new_cap * sizeof(char *));
-    char **new_resolved = (char **)realloc(map->resolved, new_cap * sizeof(char *));
+static void scope_destroy(VarScope *scope) {
+    if (!scope) return;
+    for (size_t i = 0; i < scope->count; i++) {
+        free(scope->names[i]);
+        // resolved pointers are owned by the AST
+    }
+    free(scope->names);
+    free(scope->resolved);
+    free(scope);
+}
+
+static void scope_push(ResolveContext *ctx) {
+    ctx->current = scope_create(ctx->current);
+}
+
+static void scope_pop(ResolveContext *ctx) {
+    VarScope *scope = ctx->current;
+    if (!scope) return;
+    ctx->current = scope->parent;
+    scope_destroy(scope);
+}
+
+static void scope_ensure_capacity(VarScope *scope) {
+    if (scope->count < scope->capacity) return;
+    size_t new_cap = scope->capacity ? scope->capacity * 2 : 8;
+    char **new_names = (char **)realloc(scope->names, new_cap * sizeof(char *));
+    char **new_resolved = (char **)realloc(scope->resolved, new_cap * sizeof(char *));
     if (!new_names || !new_resolved) {
         free(new_names);
         free(new_resolved);
         SEMANTIC_ERROR("Out of memory while resolving variables");
     }
-    map->names = new_names;
-    map->resolved = new_resolved;
-    map->capacity = new_cap;
+    scope->names = new_names;
+    scope->resolved = new_resolved;
+    scope->capacity = new_cap;
 }
 
-static char *var_map_lookup(const VarMap *map, const char *name) {
-    for (size_t i = 0; i < map->count; i++) {
-        if (strcmp(map->names[i], name) == 0) {
-            return map->resolved[i];
+static int scope_contains(VarScope *scope, const char *name) {
+    if (!scope) return 0;
+    for (size_t i = 0; i < scope->count; i++) {
+        if (strcmp(scope->names[i], name) == 0) return 1;
+    }
+    return 0;
+}
+
+static void scope_add(ResolveContext *ctx, const char *name, char *resolved) {
+    VarScope *scope = ctx->current;
+    if (!scope) {
+        SEMANTIC_ERROR("Semantic Error: declaration outside of any scope");
+    }
+    if (scope_contains(scope, name)) {
+        SEMANTIC_ERROR("Semantic Error: redeclaration of '%s'", name);
+    }
+    scope_ensure_capacity(scope);
+    scope->names[scope->count] = strdup(name);
+    if (!scope->names[scope->count]) {
+        SEMANTIC_ERROR("Out of memory while storing variable name");
+    }
+    scope->resolved[scope->count] = resolved;
+    scope->count++;
+}
+
+static char *scope_lookup(ResolveContext *ctx, const char *name) {
+    for (VarScope *scope = ctx->current; scope; scope = scope->parent) {
+        for (size_t i = 0; i < scope->count; i++) {
+            if (strcmp(scope->names[i], name) == 0) {
+                return scope->resolved[i];
+            }
         }
     }
     return NULL;
@@ -69,19 +115,6 @@ static char *make_unique_name(const char *original, int index) {
     }
     snprintf(buffer, buf_sz, "%s_%d", original, index);
     return buffer;
-}
-
-static void var_map_add(VarMap *map, const char *name, char *resolved) {
-    if (var_map_lookup(map, name) != NULL) {
-        SEMANTIC_ERROR("Semantic Error: redeclaration of '%s'", name);
-    }
-    var_map_ensure_capacity(map);
-    map->names[map->count] = strdup(name);
-    if (!map->names[map->count]) {
-        SEMANTIC_ERROR("Out of memory while storing variable name");
-    }
-    map->resolved[map->count] = resolved;
-    map->count++;
 }
 
 static char *duplicate_owned(const char *value) {
@@ -115,44 +148,92 @@ static void set_node_value_transfer(ASTNode *node, char *value) {
     node->owns_value = true;
 }
 
-static void resolve_expression(ASTNode *expr, VarMap *map);
+static void resolve_block_items(ASTNode *item, ResolveContext *ctx);
+static void resolve_statement(ASTNode *stmt, ResolveContext *ctx);
+static void resolve_expression(ASTNode *expr, ResolveContext *ctx);
 
-static void resolve_statement(ASTNode *stmt, VarMap *map) {
+static void resolve_declaration(ASTNode *decl, ResolveContext *ctx) {
+    if (!decl || decl->type != AST_DECLARATION) return;
+    if (!decl->value) {
+        SEMANTIC_ERROR("Semantic Error: declaration missing identifier");
+    }
+
+    char *resolved = make_unique_name(decl->value, ctx->next_unique++);
+    scope_add(ctx, decl->value, resolved);
+    set_node_value_transfer(decl, resolved);
+
+    if (decl->left) {
+        resolve_expression(decl->left, ctx);
+    }
+}
+
+static void resolve_statement(ASTNode *stmt, ResolveContext *ctx) {
     if (!stmt) return;
     switch (stmt->type) {
         case AST_STATEMENT_RETURN:
         case AST_STATEMENT_EXPRESSION:
-            resolve_expression(stmt->left, map);
+            resolve_expression(stmt->left, ctx);
             break;
         case AST_STATEMENT_NULL:
             break;
         case AST_STATEMENT_IF:
-            resolve_expression(stmt->left, map);
-            resolve_statement(stmt->right, map);
-            resolve_statement(stmt->third, map);
+            resolve_expression(stmt->left, ctx);
+            resolve_statement(stmt->right, ctx);
+            resolve_statement(stmt->third, ctx);
+            break;
+        case AST_STATEMENT_COMPOUND:
+            scope_push(ctx);
+            resolve_block_items(stmt->left, ctx);
+            scope_pop(ctx);
+            break;
+        case AST_STATEMENT_WHILE:
+            resolve_expression(stmt->left, ctx);
+            ctx->loop_depth++;
+            resolve_statement(stmt->right, ctx);
+            ctx->loop_depth--;
+            break;
+        case AST_STATEMENT_DO_WHILE:
+            ctx->loop_depth++;
+            resolve_statement(stmt->left, ctx);
+            ctx->loop_depth--;
+            resolve_expression(stmt->right, ctx);
+            break;
+        case AST_STATEMENT_FOR:
+            scope_push(ctx);
+            if (stmt->left) {
+                if (stmt->left->type == AST_DECLARATION) {
+                    resolve_declaration(stmt->left, ctx);
+                } else {
+                    resolve_statement(stmt->left, ctx);
+                }
+            }
+            if (stmt->right) {
+                resolve_expression(stmt->right, ctx);
+            }
+            ctx->loop_depth++;
+            resolve_statement(stmt->fourth, ctx);
+            ctx->loop_depth--;
+            if (stmt->third) {
+                resolve_expression(stmt->third, ctx);
+            }
+            scope_pop(ctx);
+            break;
+        case AST_STATEMENT_BREAK:
+            if (ctx->loop_depth <= 0) {
+                SEMANTIC_ERROR("Semantic Error: 'break' used outside of a loop");
+            }
+            break;
+        case AST_STATEMENT_CONTINUE:
+            if (ctx->loop_depth <= 0) {
+                SEMANTIC_ERROR("Semantic Error: 'continue' used outside of a loop");
+            }
             break;
         default:
             SEMANTIC_ERROR("Semantic Error: unexpected node type in statement");
     }
 }
 
-static void resolve_declaration(ASTNode *decl, VarMap *map) {
-    if (!decl || decl->type != AST_DECLARATION) return;
-    if (!decl->value) {
-        SEMANTIC_ERROR("Semantic Error: declaration missing identifier");
-    }
-
-    char *resolved = make_unique_name(decl->value, map->next_unique++);
-    var_map_add(map, decl->value, resolved);
-
-    set_node_value_transfer(decl, resolved);
-
-    if (decl->left) {
-        resolve_expression(decl->left, map);
-    }
-}
-
-static void resolve_expression(ASTNode *expr, VarMap *map) {
+static void resolve_expression(ASTNode *expr, ResolveContext *ctx) {
     if (!expr) return;
 
     switch (expr->type) {
@@ -160,14 +241,14 @@ static void resolve_expression(ASTNode *expr, VarMap *map) {
             if (!expr->left || expr->left->type != AST_EXPRESSION_VARIABLE) {
                 SEMANTIC_ERROR("Semantic Error: invalid lvalue in assignment");
             }
-            resolve_expression(expr->left, map);
-            resolve_expression(expr->right, map);
+            resolve_expression(expr->left, ctx);
+            resolve_expression(expr->right, ctx);
             break;
         case AST_EXPRESSION_VARIABLE: {
             if (!expr->value) {
                 SEMANTIC_ERROR("Semantic Error: unnamed variable usage");
             }
-            char *resolved = var_map_lookup(map, expr->value);
+            char *resolved = scope_lookup(ctx, expr->value);
             if (!resolved) {
                 SEMANTIC_ERROR("Semantic Error: use of undeclared variable '%s'", expr->value);
             }
@@ -177,7 +258,7 @@ static void resolve_expression(ASTNode *expr, VarMap *map) {
         case AST_EXPRESSION_NEGATE:
         case AST_EXPRESSION_COMPLEMENT:
         case AST_EXPRESSION_NOT:
-            resolve_expression(expr->left, map);
+            resolve_expression(expr->left, ctx);
             break;
         case AST_EXPRESSION_ADD:
         case AST_EXPRESSION_SUBTRACT:
@@ -192,13 +273,13 @@ static void resolve_expression(ASTNode *expr, VarMap *map) {
         case AST_EXPRESSION_GREATER_EQUAL:
         case AST_EXPRESSION_LOGICAL_AND:
         case AST_EXPRESSION_LOGICAL_OR:
-            resolve_expression(expr->left, map);
-            resolve_expression(expr->right, map);
+            resolve_expression(expr->left, ctx);
+            resolve_expression(expr->right, ctx);
             break;
         case AST_EXPRESSION_CONDITIONAL:
-            resolve_expression(expr->left, map);
-            resolve_expression(expr->right, map);
-            resolve_expression(expr->third, map);
+            resolve_expression(expr->left, ctx);
+            resolve_expression(expr->right, ctx);
+            resolve_expression(expr->third, ctx);
             break;
         case AST_EXPRESSION_CONSTANT:
             break;
@@ -207,7 +288,7 @@ static void resolve_expression(ASTNode *expr, VarMap *map) {
     }
 }
 
-static void resolve_block_items(ASTNode *item, VarMap *map) {
+static void resolve_block_items(ASTNode *item, ResolveContext *ctx) {
     for (ASTNode *curr = item; curr; curr = curr->right) {
         if (!curr || curr->type != AST_BLOCK_ITEM) {
             SEMANTIC_ERROR("Semantic Error: invalid block item");
@@ -215,9 +296,9 @@ static void resolve_block_items(ASTNode *item, VarMap *map) {
         ASTNode *content = curr->left;
         if (!content) continue;
         if (content->type == AST_DECLARATION) {
-            resolve_declaration(content, map);
+            resolve_declaration(content, ctx);
         } else {
-            resolve_statement(content, map);
+            resolve_statement(content, ctx);
         }
     }
 }
@@ -232,8 +313,8 @@ void resolve_variables(ASTNode *program) {
         SEMANTIC_ERROR("Semantic Error: expected function definition");
     }
 
-    VarMap map;
-    var_map_init(&map);
-    resolve_block_items(function->left, &map);
-    var_map_free(&map);
+    ResolveContext ctx = {0};
+    scope_push(&ctx); // function scope
+    resolve_block_items(function->left, &ctx);
+    scope_pop(&ctx);
 }
