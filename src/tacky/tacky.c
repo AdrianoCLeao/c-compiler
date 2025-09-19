@@ -3,11 +3,18 @@
 #include <string.h>
 #include <stdio.h>
 
+typedef struct LoopContext {
+    const char *break_label;
+    const char *continue_label;
+    struct LoopContext *parent;
+} LoopContext;
+
 typedef struct {
     int temp_counter;
     int label_counter;
     TackyInstr *head;
     TackyInstr *tail;
+    LoopContext *loop_stack;
 } TackyGenCtx;
 
 static char *xstrdup_local(const char *s) {
@@ -38,6 +45,33 @@ static void emit_instr(TackyGenCtx *ctx, TackyInstr *ins) {
         ctx->tail->next = ins;
         ctx->tail = ins;
     }
+}
+
+static void loop_push(TackyGenCtx *ctx, const char *break_label, const char *continue_label) {
+    LoopContext *loop = (LoopContext *)malloc(sizeof(LoopContext));
+    if (!loop) {
+        fprintf(stderr, "Out of memory while creating loop context\n");
+        exit(1);
+    }
+    loop->break_label = break_label;
+    loop->continue_label = continue_label;
+    loop->parent = ctx->loop_stack;
+    ctx->loop_stack = loop;
+}
+
+static void loop_pop(TackyGenCtx *ctx) {
+    LoopContext *loop = ctx->loop_stack;
+    if (!loop) return;
+    ctx->loop_stack = loop->parent;
+    free(loop);
+}
+
+static const char *current_break_label(TackyGenCtx *ctx) {
+    return ctx->loop_stack ? ctx->loop_stack->break_label : NULL;
+}
+
+static const char *current_continue_label(TackyGenCtx *ctx) {
+    return ctx->loop_stack ? ctx->loop_stack->continue_label : NULL;
 }
 
 static TackyVal tv_const(int v) {
@@ -84,6 +118,10 @@ static TackyBinaryOp convert_binop(ASTNodeType t) {
         default: return TACKY_BIN_ADD; // unreachable
     }
 }
+
+static void gen_block_items(ASTNode *item, TackyGenCtx *ctx);
+static void gen_statement(ASTNode *stmt, TackyGenCtx *ctx);
+static void gen_declaration(ASTNode *decl, TackyGenCtx *ctx);
 
 static TackyVal gen_exp(ASTNode *e, TackyGenCtx *ctx) {
     switch (e->type) {
@@ -289,6 +327,8 @@ static TackyVal gen_exp(ASTNode *e, TackyGenCtx *ctx) {
     }
 }
 
+static void gen_block_items(ASTNode *item, TackyGenCtx *ctx);
+
 static void gen_statement(ASTNode *stmt, TackyGenCtx *ctx) {
     if (!stmt) return;
     switch (stmt->type) {
@@ -307,6 +347,9 @@ static void gen_statement(ASTNode *stmt, TackyGenCtx *ctx) {
             break;
         }
         case AST_STATEMENT_NULL:
+            break;
+        case AST_STATEMENT_COMPOUND:
+            gen_block_items(stmt->left, ctx);
             break;
         case AST_STATEMENT_IF: {
             TackyVal cond = gen_exp(stmt->left, ctx);
@@ -346,6 +389,165 @@ static void gen_statement(ASTNode *stmt, TackyGenCtx *ctx) {
 
             if (else_label) free(else_label);
             free(end_label);
+            break;
+        }
+        case AST_STATEMENT_WHILE: {
+            char *cond_label = make_label(ctx, "while_cond");
+            char *end_label = make_label(ctx, "while_end");
+
+            TackyInstr *label_cond = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            label_cond->kind = TACKY_INSTR_LABEL;
+            label_cond->label = xstrdup_local(cond_label);
+            emit_instr(ctx, label_cond);
+
+            TackyVal cond_val = gen_exp(stmt->left, ctx);
+            TackyInstr *jump_zero = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            jump_zero->kind = TACKY_INSTR_JUMP_IF_ZERO;
+            jump_zero->cond_val = cond_val;
+            jump_zero->jump_target = xstrdup_local(end_label);
+            emit_instr(ctx, jump_zero);
+
+            loop_push(ctx, end_label, cond_label);
+            gen_statement(stmt->right, ctx);
+            loop_pop(ctx);
+
+            TackyInstr *jump_back = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            jump_back->kind = TACKY_INSTR_JUMP;
+            jump_back->jump_target = xstrdup_local(cond_label);
+            emit_instr(ctx, jump_back);
+
+            TackyInstr *label_end = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            label_end->kind = TACKY_INSTR_LABEL;
+            label_end->label = xstrdup_local(end_label);
+            emit_instr(ctx, label_end);
+
+            free(cond_label);
+            free(end_label);
+            break;
+        }
+        case AST_STATEMENT_DO_WHILE: {
+            char *body_label = make_label(ctx, "do_body");
+            char *continue_label = make_label(ctx, "do_continue");
+            char *end_label = make_label(ctx, "do_end");
+
+            TackyInstr *label_body = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            label_body->kind = TACKY_INSTR_LABEL;
+            label_body->label = xstrdup_local(body_label);
+            emit_instr(ctx, label_body);
+
+            loop_push(ctx, end_label, continue_label);
+            gen_statement(stmt->left, ctx);
+            loop_pop(ctx);
+
+            TackyInstr *label_continue = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            label_continue->kind = TACKY_INSTR_LABEL;
+            label_continue->label = xstrdup_local(continue_label);
+            emit_instr(ctx, label_continue);
+
+            TackyVal cond_val = gen_exp(stmt->right, ctx);
+            TackyInstr *jump_back = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            jump_back->kind = TACKY_INSTR_JUMP_IF_NOT_ZERO;
+            jump_back->cond_val = cond_val;
+            jump_back->jump_target = xstrdup_local(body_label);
+            emit_instr(ctx, jump_back);
+
+            TackyInstr *label_end = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            label_end->kind = TACKY_INSTR_LABEL;
+            label_end->label = xstrdup_local(end_label);
+            emit_instr(ctx, label_end);
+
+            free(body_label);
+            free(continue_label);
+            free(end_label);
+            break;
+        }
+        case AST_STATEMENT_FOR: {
+            ASTNode *init = stmt->left;
+            ASTNode *condition = stmt->right;
+            ASTNode *post = stmt->third;
+            ASTNode *body = stmt->fourth;
+
+            if (init) {
+                if (init->type == AST_DECLARATION) {
+                    gen_declaration(init, ctx);
+                } else {
+                    gen_statement(init, ctx);
+                }
+            }
+
+            char *cond_label = make_label(ctx, "for_cond");
+            char *continue_label = make_label(ctx, "for_continue");
+            char *end_label = make_label(ctx, "for_end");
+
+            TackyInstr *label_cond = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            label_cond->kind = TACKY_INSTR_LABEL;
+            label_cond->label = xstrdup_local(cond_label);
+            emit_instr(ctx, label_cond);
+
+            if (condition) {
+                TackyVal cond_val = gen_exp(condition, ctx);
+                TackyInstr *jump_zero = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+                jump_zero->kind = TACKY_INSTR_JUMP_IF_ZERO;
+                jump_zero->cond_val = cond_val;
+                jump_zero->jump_target = xstrdup_local(end_label);
+                emit_instr(ctx, jump_zero);
+            }
+
+            loop_push(ctx, end_label, continue_label);
+            if (body) {
+                gen_statement(body, ctx);
+            }
+            loop_pop(ctx);
+
+            TackyInstr *label_continue = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            label_continue->kind = TACKY_INSTR_LABEL;
+            label_continue->label = xstrdup_local(continue_label);
+            emit_instr(ctx, label_continue);
+
+            if (post) {
+                TackyVal post_val = gen_exp(post, ctx);
+                if (post_val.kind == TACKY_VAL_VAR && post_val.owns_name && post_val.var_name) {
+                    free(post_val.var_name);
+                }
+            }
+
+            TackyInstr *jump_back = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            jump_back->kind = TACKY_INSTR_JUMP;
+            jump_back->jump_target = xstrdup_local(cond_label);
+            emit_instr(ctx, jump_back);
+
+            TackyInstr *label_end = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            label_end->kind = TACKY_INSTR_LABEL;
+            label_end->label = xstrdup_local(end_label);
+            emit_instr(ctx, label_end);
+
+            free(cond_label);
+            free(continue_label);
+            free(end_label);
+            break;
+        }
+        case AST_STATEMENT_BREAK: {
+            const char *target = current_break_label(ctx);
+            if (!target) {
+                fprintf(stderr, "Internal error: 'break' encountered outside of loop during code generation\n");
+                exit(1);
+            }
+            TackyInstr *jmp = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            jmp->kind = TACKY_INSTR_JUMP;
+            jmp->jump_target = xstrdup_local(target);
+            emit_instr(ctx, jmp);
+            break;
+        }
+        case AST_STATEMENT_CONTINUE: {
+            const char *target = current_continue_label(ctx);
+            if (!target) {
+                fprintf(stderr, "Internal error: 'continue' encountered outside of loop during code generation\n");
+                exit(1);
+            }
+            TackyInstr *jmp = (TackyInstr *)calloc(1, sizeof(TackyInstr));
+            jmp->kind = TACKY_INSTR_JUMP;
+            jmp->jump_target = xstrdup_local(target);
+            emit_instr(ctx, jmp);
             break;
         }
         default:
