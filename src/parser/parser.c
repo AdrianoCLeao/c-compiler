@@ -12,6 +12,7 @@ static ASTNode *create_ast_node(ASTNodeType type, const char *value, ASTNode *le
     node->left = left;
     node->right = right;
     node->third = NULL;
+    node->fourth = NULL;
     return node;
 }
 
@@ -37,11 +38,14 @@ void parser_init(Parser *parser, Lexer *lexer) {
 }
 
 static ASTNode *parse_function(Parser *parser);
+static ASTNode *parse_block(Parser *parser);
 static ASTNode *parse_expression(Parser *parser);
 static ASTNode *parse_conditional(Parser *parser);
 static ASTNode *parse_block_item(Parser *parser);
 static ASTNode *parse_declaration(Parser *parser);
 static ASTNode *parse_statement(Parser *parser);
+static ASTNode *parse_for_statement(Parser *parser);
+static ASTNode *wrap_expression_statement(ASTNode *expr);
 
 ASTNode *parse_program(Parser *parser) {
     return create_ast_node(AST_PROGRAM, NULL, parse_function(parser), NULL);
@@ -75,16 +79,9 @@ ASTNode *parse_function(Parser *parser) {
     consume(parser, TOKEN_OPEN_PAREN);
     consume(parser, TOKEN_KEYWORD_VOID);
     consume(parser, TOKEN_CLOSE_PAREN);
+
     consume(parser, TOKEN_OPEN_BRACE);
-
-    ASTNode *block_head = NULL;
-    ASTNode *block_tail = NULL;
-    while (parser->current_token.type != TOKEN_CLOSE_BRACE) {
-        ASTNode *item = parse_block_item(parser);
-        append_block_item(&block_head, &block_tail, item);
-    }
-    consume(parser, TOKEN_CLOSE_BRACE);
-
+    ASTNode *block_head = parse_block(parser);
     ASTNode *function = create_ast_node(AST_FUNCTION, func_name_copy, block_head, NULL);
     free(func_name_copy);
     return function;
@@ -97,6 +94,17 @@ static ASTNode *parse_block_item(Parser *parser) {
     }
     ASTNode *stmt = parse_statement(parser);
     return create_ast_node(AST_BLOCK_ITEM, NULL, stmt, NULL);
+}
+
+static ASTNode *parse_block(Parser *parser) {
+    ASTNode *block_head = NULL;
+    ASTNode *block_tail = NULL;
+    while (parser->current_token.type != TOKEN_CLOSE_BRACE) {
+        ASTNode *item = parse_block_item(parser);
+        append_block_item(&block_head, &block_tail, item);
+    }
+    consume(parser, TOKEN_CLOSE_BRACE);
+    return block_head;
 }
 
 static ASTNode *parse_declaration(Parser *parser) {
@@ -126,12 +134,58 @@ static ASTNode *parse_declaration(Parser *parser) {
     return decl;
 }
 
+static ASTNode *wrap_expression_statement(ASTNode *expr) {
+    if (!expr) return NULL;
+    return create_ast_node(AST_STATEMENT_EXPRESSION, NULL, expr, NULL);
+}
+
+static ASTNode *parse_for_statement(Parser *parser) {
+    consume(parser, TOKEN_KEYWORD_FOR);
+    consume(parser, TOKEN_OPEN_PAREN);
+
+    ASTNode *init = NULL;
+    if (parser->current_token.type == TOKEN_SEMICOLON) {
+        consume(parser, TOKEN_SEMICOLON);
+    } else if (parser->current_token.type == TOKEN_KEYWORD_INT) {
+        init = parse_declaration(parser);
+    } else {
+        ASTNode *expr = parse_expression(parser);
+        consume(parser, TOKEN_SEMICOLON);
+        init = wrap_expression_statement(expr);
+    }
+
+    ASTNode *condition = NULL;
+    if (parser->current_token.type != TOKEN_SEMICOLON) {
+        condition = parse_expression(parser);
+    }
+    consume(parser, TOKEN_SEMICOLON);
+
+    ASTNode *post = NULL;
+    if (parser->current_token.type != TOKEN_CLOSE_PAREN) {
+        post = parse_expression(parser);
+    }
+    consume(parser, TOKEN_CLOSE_PAREN);
+
+    ASTNode *body = parse_statement(parser);
+
+    ASTNode *for_node = create_ast_node(AST_STATEMENT_FOR, NULL, init, condition);
+    for_node->third = post;
+    for_node->fourth = body;
+    return for_node;
+}
+
 static ASTNode *parse_statement(Parser *parser) {
     if (parser->current_token.type == TOKEN_KEYWORD_RETURN) {
         consume(parser, TOKEN_KEYWORD_RETURN);
         ASTNode *expr = parse_expression(parser);
         consume(parser, TOKEN_SEMICOLON);
         return create_ast_node(AST_STATEMENT_RETURN, NULL, expr, NULL);
+    }
+
+    if (parser->current_token.type == TOKEN_OPEN_BRACE) {
+        consume(parser, TOKEN_OPEN_BRACE);
+        ASTNode *block = parse_block(parser);
+        return create_ast_node(AST_STATEMENT_COMPOUND, NULL, block, NULL);
     }
 
     if (parser->current_token.type == TOKEN_KEYWORD_IF) {
@@ -148,6 +202,44 @@ static ASTNode *parse_statement(Parser *parser) {
         ASTNode *if_node = create_ast_node(AST_STATEMENT_IF, NULL, condition, then_stmt);
         if_node->third = else_stmt;
         return if_node;
+    }
+
+    if (parser->current_token.type == TOKEN_KEYWORD_WHILE) {
+        consume(parser, TOKEN_KEYWORD_WHILE);
+        consume(parser, TOKEN_OPEN_PAREN);
+        ASTNode *condition = parse_expression(parser);
+        consume(parser, TOKEN_CLOSE_PAREN);
+        ASTNode *body = parse_statement(parser);
+        ASTNode *while_node = create_ast_node(AST_STATEMENT_WHILE, NULL, condition, body);
+        return while_node;
+    }
+
+    if (parser->current_token.type == TOKEN_KEYWORD_DO) {
+        consume(parser, TOKEN_KEYWORD_DO);
+        ASTNode *body = parse_statement(parser);
+        consume(parser, TOKEN_KEYWORD_WHILE);
+        consume(parser, TOKEN_OPEN_PAREN);
+        ASTNode *condition = parse_expression(parser);
+        consume(parser, TOKEN_CLOSE_PAREN);
+        consume(parser, TOKEN_SEMICOLON);
+        ASTNode *do_node = create_ast_node(AST_STATEMENT_DO_WHILE, NULL, body, condition);
+        return do_node;
+    }
+
+    if (parser->current_token.type == TOKEN_KEYWORD_FOR) {
+        return parse_for_statement(parser);
+    }
+
+    if (parser->current_token.type == TOKEN_KEYWORD_BREAK) {
+        consume(parser, TOKEN_KEYWORD_BREAK);
+        consume(parser, TOKEN_SEMICOLON);
+        return create_ast_node(AST_STATEMENT_BREAK, NULL, NULL, NULL);
+    }
+
+    if (parser->current_token.type == TOKEN_KEYWORD_CONTINUE) {
+        consume(parser, TOKEN_KEYWORD_CONTINUE);
+        consume(parser, TOKEN_SEMICOLON);
+        return create_ast_node(AST_STATEMENT_CONTINUE, NULL, NULL, NULL);
     }
 
     if (parser->current_token.type == TOKEN_SEMICOLON) {
@@ -299,6 +391,7 @@ void free_ast(ASTNode *node) {
     free_ast(node->left);
     free_ast(node->right);
     free_ast(node->third);
+    free_ast(node->fourth);
     if (node->value && node->owns_value) {
         free(node->value);
     }
@@ -339,6 +432,24 @@ void print_ast(ASTNode *node, int depth) {
             break;
         case AST_STATEMENT_IF:
             printf("If\n");
+            break;
+        case AST_STATEMENT_COMPOUND:
+            printf("Compound\n");
+            break;
+        case AST_STATEMENT_WHILE:
+            printf("While\n");
+            break;
+        case AST_STATEMENT_DO_WHILE:
+            printf("DoWhile\n");
+            break;
+        case AST_STATEMENT_FOR:
+            printf("For\n");
+            break;
+        case AST_STATEMENT_BREAK:
+            printf("Break\n");
+            break;
+        case AST_STATEMENT_CONTINUE:
+            printf("Continue\n");
             break;
         case AST_EXPRESSION_CONSTANT:
             printf("Constant: %s\n", node->value);
@@ -408,4 +519,5 @@ void print_ast(ASTNode *node, int depth) {
     print_ast(node->left, depth + 1);
     print_ast(node->right, depth + 1);
     print_ast(node->third, depth + 1);
+    print_ast(node->fourth, depth + 1);
 }
