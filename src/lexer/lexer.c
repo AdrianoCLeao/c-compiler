@@ -11,13 +11,18 @@
     #include <strings.h>
 #endif
 
-static const char *keywords[] = {"int", "void", "return", "if", "else"};
+static const char *keywords[] = {"int", "void", "return", "if", "else", "do", "while", "for", "break", "continue"};
 static const LexTokenType keyword_tokens[] = {
     TOKEN_KEYWORD_INT,
     TOKEN_KEYWORD_VOID,
     TOKEN_KEYWORD_RETURN,
     TOKEN_KEYWORD_IF,
-    TOKEN_KEYWORD_ELSE
+    TOKEN_KEYWORD_ELSE,
+    TOKEN_KEYWORD_DO,
+    TOKEN_KEYWORD_WHILE,
+    TOKEN_KEYWORD_FOR,
+    TOKEN_KEYWORD_BREAK,
+    TOKEN_KEYWORD_CONTINUE
 };
 
 void lexer_init(Lexer *lexer, const char *source) {
